@@ -39,6 +39,16 @@ const vocabSchema = new mongoose.Schema(
 
         // Audio
         audio: { type: String },
+        english: { type: String },
+        image: {
+            url: String,
+            public_id: String,
+        },
+
+        video: {
+            url: String,
+            public_id: String,
+        },
     },
     { timestamps: true }
 );
