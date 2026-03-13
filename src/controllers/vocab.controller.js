@@ -224,6 +224,7 @@ export const updateVocab = async (req, res) => {
 export const bulkUpdateVocab = async (req, res) => {
   try {
     const ops = req.body.map(v => ({
+
       updateOne: {
         filter: { _id: v._id },
         update: {
@@ -238,6 +239,9 @@ export const bulkUpdateVocab = async (req, res) => {
           example: v.example,
           audio: v.audio,
           phoneticVi: v.phoneticVi,
+          english: v.english,
+          image: v.image,
+          video: v.video,
         },
       },
     }))
@@ -289,3 +293,4 @@ export const createManyVocab = async (req, res) => {
     return errorResponse(res, err.message)
   }
 }
+
