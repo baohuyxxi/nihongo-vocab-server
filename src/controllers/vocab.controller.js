@@ -59,12 +59,54 @@ export const reviewSession = async (req, res) => {
       directions = "jp_vi",
     } = req.query
 
-    const lessonArr = lessons.split(",").map(Number)
+    /* ======================
+        PARSE INPUT
+    ====================== */
+
+    const rawList = lessons ? lessons.split(",") : []
+
+    // ✅ tách lesson và topic
+    const lessonArr = rawList
+      .map((x) => Number(x))
+      .filter((x) => !isNaN(x))
+
+    const topicArr = rawList
+      .filter((x) => isNaN(Number(x)))
+      .map((x) => x.toLowerCase().trim())
+
     const directionArr = directions.split(",")
 
-    const vocabs = await Vocabulary.find({
-      lesson: { $in: lessonArr },
-    })
+    /* ======================
+        BUILD QUERY
+    ====================== */
+
+    const conditions = []
+
+    if (lessonArr.length) {
+      conditions.push({ lesson: { $in: lessonArr } })
+    }
+
+    if (topicArr.length) {
+      conditions.push({ topic: { $in: topicArr } })
+    }
+
+    let query = {}
+
+    if (conditions.length === 1) {
+      query = conditions[0]
+    } else if (conditions.length > 1) {
+      query = { $or: conditions }
+    }
+
+    /* ======================
+        FETCH DATA
+    ====================== */
+
+    const vocabs = await Vocabulary.find(query)
+
+    /* ======================
+        BUILD DATA
+    ====================== */
 
     let data
 
@@ -87,7 +129,6 @@ export const reviewSession = async (req, res) => {
     return errorResponse(res, err.message)
   }
 }
-
 /* =========================
    BUILDERS
 ========================= */
@@ -294,3 +335,29 @@ export const createManyVocab = async (req, res) => {
   }
 }
 
+
+
+export const getVocabByTopic = async (req, res) => {
+  try {
+    const { topics } = req.query
+
+    if (!topics) {
+      return errorResponse(res, "Thiếu topics")
+    }
+
+    const topicArr = topics.split(",").map(t => t.toLowerCase().trim())
+
+    const data = await Vocabulary.find({
+      topic: { $in: topicArr },
+    }).sort({ lesson: 1 })
+
+    return successResponse(
+      res,
+      data,
+      "Lấy từ vựng theo topic thành công",
+      { total: data.length }
+    )
+  } catch (err) {
+    return errorResponse(res, err.message)
+  }
+}

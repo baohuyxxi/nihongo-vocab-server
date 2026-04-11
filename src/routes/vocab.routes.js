@@ -8,7 +8,8 @@ import {
   bulkUpdateVocab,
   createVocab,
   deleteVocab,
-  createManyVocab
+  createManyVocab,
+  getVocabByTopic
 } from "../controllers/vocab.controller.js"
 
 const router = express.Router()
@@ -30,6 +31,8 @@ router.delete("/:id", deleteVocab)
 
 /* ===== CREATE MANY ===== */
 router.post("/bulk/create", createManyVocab)
+
+router.get("/topic", getVocabByTopic)
 
 
 export default router
