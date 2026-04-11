@@ -3,7 +3,9 @@ import mongoose from "mongoose";
 const vocabSchema = new mongoose.Schema(
     {
         // Bài Minna
-        lesson: { type: Number, required: true },
+        lesson: { type: Number }, // optional
+
+        topic: { type: String },
 
         // Chữ viết
         kanji: { type: String },
