@@ -1,25 +1,18 @@
-import express from "express";
-import Lesson from "../models/Lesson.js";
+import express from "express"
+import {
+  getLessons,
+  getLessonDetail,
+  getAllAdverbs,
+  getAdverbsGrouped
+} from "../controllers/lesson.controller.js"
 
-const router = express.Router();
+const router = express.Router()
 
-/**
- * ✅ Danh sách bài Minna
- * GET /api/lessons
- */
-router.get("/", async (req, res) => {
-  const lessons = await Lesson.find().sort({ number: 1 });
-  res.json(lessons);
-});
+router.get("/", getLessons)
+router.get("/:lesson", getLessonDetail)
 
-/**
- * ✅ Chi tiết 1 bài
- * GET /api/lessons/5
- */
-router.get("/:lesson", async (req, res) => {
-  const lesson = Number(req.params.lesson);
-  const data = await Lesson.findOne({ number: lesson });
-  res.json(data);
-});
+/* ✅ PHÓ TỪ */
+router.get("/adverbs/all", getAllAdverbs)
+router.get("/adverbs/grouped", getAdverbsGrouped) // 🔥 QUAN TRỌNG
 
-export default router;
+export default router
