@@ -361,3 +361,27 @@ export const getVocabByTopic = async (req, res) => {
     return errorResponse(res, err.message)
   }
 }
+
+export const getAllVerbs = async (req, res) => {
+  try {
+    const data = await Vocabulary.find({
+      hiragana: {
+        $regex: "ます$",
+      },
+    }).sort({
+      lesson: 1,
+      hiragana: 1,
+    })
+
+    res.json({
+      success: true,
+      total: data.length,
+      data,
+    })
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: err.message,
+    })
+  }
+}
