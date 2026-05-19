@@ -1,88 +1,216 @@
+// src/controllers/lesson.controller.js
+
 import Lesson from "../models/Lesson.js"
+
 import Vocabulary from "../models/Vocabulary.js"
-import { successResponse, errorResponse } from "../utils/response.js"
+
+import {
+  successResponse,
+  errorResponse,
+} from "../utils/response.js"
 
 /**
  * 📘 Danh sách bài
  */
-export const getLessons = async (req, res) => {
+export const getLessons = async (
+  req,
+  res
+) => {
   try {
-    const lessons = await Lesson.find().sort({ number: 1 })
+    const lessons =
+      await Lesson.find().sort({
+        number: 1,
+      })
+
     res.json(lessons)
   } catch (err) {
-    res.status(500).json({ message: err.message })
+    res.status(500).json({
+      message: err.message,
+    })
   }
 }
 
 /**
  * 📘 Chi tiết 1 bài
  */
-export const getLessonDetail = async (req, res) => {
-  try {
-    const lesson = Number(req.params.lesson)
-    const data = await Lesson.findOne({ number: lesson })
-    res.json(data)
-  } catch (err) {
-    res.status(500).json({ message: err.message })
-  }
-}
-
-/**
- * 🚀 Lấy TẤT CẢ PHÓ TỪ (sort theo あいうえお)
- */
-export const getAllAdverbs = async (req, res) => {
-  try {
-    const data = await Vocabulary.find({
-      topic: "adverbs",
-    })
-      .collation({ locale: "ja" }) // sort chuẩn Nhật
-      .sort({ hiragana: 1 })
-
-    return successResponse(
-      res,
-      data,
-      "Lấy tất cả phó từ thành công",
-      { total: data.length }
-    )
-  } catch (err) {
-    return errorResponse(res, err.message)
-  }
-}
-
-/**
- * 🚀 Lấy PHÓ TỪ theo GROUP (🔥 dùng cho FE học)
- */
-export const getAdverbsGrouped = async (req, res) => {
-  try {
-    const data = await Vocabulary.find({
-      topic: "adverbs",
-    }).lean()
-
-    const grouped = {}
-
-    data.forEach((item) => {
-      const key = item.group || "other"
-
-      if (!grouped[key]) {
-        grouped[key] = []
-      }
-
-      grouped[key].push(item)
-    })
-
-    // sort từng group theo hiragana
-    Object.keys(grouped).forEach((key) => {
-      grouped[key].sort((a, b) =>
-        (a.hiragana || "").localeCompare(b.hiragana || "ja")
+export const getLessonDetail =
+  async (req, res) => {
+    try {
+      const lesson = Number(
+        req.params.lesson
       )
-    })
 
-    return successResponse(
-      res,
-      grouped,
-      "Lấy phó từ theo nhóm thành công"
-    )
-  } catch (err) {
-    return errorResponse(res, err.message)
+      const data =
+        await Lesson.findOne({
+          number: lesson,
+        })
+
+      res.json(data)
+    } catch (err) {
+      res.status(500).json({
+        message: err.message,
+      })
+    }
   }
-}
+
+/**
+ * 🚀 Lấy TẤT CẢ PHÓ TỪ
+ */
+export const getAllAdverbs =
+  async (req, res) => {
+    try {
+      const data =
+        await Vocabulary.find({
+          topic: "adverbs",
+        })
+          .collation({
+            locale: "ja",
+          })
+          .sort({
+            hiragana: 1,
+          })
+
+      return successResponse(
+        res,
+        data,
+        "Lấy tất cả phó từ thành công",
+        {
+          total: data.length,
+        }
+      )
+    } catch (err) {
+      return errorResponse(
+        res,
+        err.message
+      )
+    }
+  }
+
+/**
+ * 🚀 Lấy PHÓ TỪ theo GROUP
+ */
+export const getAdverbsGrouped =
+  async (req, res) => {
+    try {
+      const data =
+        await Vocabulary.find({
+          topic: "adverbs",
+        }).lean()
+
+      const grouped = {}
+
+      data.forEach((item) => {
+        const key =
+          item.group || "other"
+
+        if (!grouped[key]) {
+          grouped[key] = []
+        }
+
+        grouped[key].push(item)
+      })
+
+      Object.keys(grouped).forEach(
+        (key) => {
+          grouped[key].sort((a, b) =>
+            (
+              a.hiragana || ""
+            ).localeCompare(
+              b.hiragana || "",
+              "ja"
+            )
+          )
+        }
+      )
+
+      return successResponse(
+        res,
+        grouped,
+        "Lấy phó từ theo nhóm thành công"
+      )
+    } catch (err) {
+      return errorResponse(
+        res,
+        err.message
+      )
+    }
+  }
+
+/**
+ * 🚀 Lấy danh sách từ đồng hiragana
+ *
+ * ví dụ:
+ * きます
+ * => 来ます, 着ます
+ */
+export const getDuplicateHiragana =
+  async (req, res) => {
+    try {
+      const data =
+        await Vocabulary.aggregate([
+          {
+            $match: {
+              hiragana: {
+                $exists: true,
+                $ne: null,
+                $ne: "",
+              },
+            },
+          },
+
+          {
+            $group: {
+              _id: "$hiragana",
+
+              count: {
+                $sum: 1,
+              },
+
+              items: {
+                $push: {
+                  _id: "$_id",
+                  lesson: "$lesson",
+                  hiragana:
+                    "$hiragana",
+                  kanji: "$kanji",
+                  meaning:
+                    "$meaning",
+                  partOfSpeech:
+                    "$partOfSpeech",
+                },
+              },
+            },
+          },
+
+          {
+            $match: {
+              count: {
+                $gt: 1,
+              },
+            },
+          },
+
+          {
+            $sort: {
+              count: -1,
+              _id: 1,
+            },
+          },
+        ])
+
+      return successResponse(
+        res,
+        data,
+        "Lấy danh sách từ đồng hiragana thành công",
+        {
+          total: data.length,
+        }
+      )
+    } catch (err) {
+      return errorResponse(
+        res,
+        err.message
+      )
+    }
+  }
+

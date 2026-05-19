@@ -385,3 +385,100 @@ export const getAllVerbs = async (req, res) => {
     })
   }
 }
+
+export const getTest = async (req, res) => {
+  try {
+    // 1. Lấy và chuyển đổi danh sách bài học từ query string thành mảng số
+    const lessons = req.query.lessons.split(",").map(Number);
+
+    // 2. Sử dụng Aggregation để lọc và định hình lại cấu trúc dữ liệu trả về
+    const data = await Vocabulary.aggregate([
+      {
+        // Bước A: Lọc các từ vựng theo bài học giống như điều kiện cũ
+        $match: {
+          lesson: { $in: lessons }
+        }
+      },
+      {
+        // Bước B: Sắp xếp theo thứ tự bài tăng dần
+        $sort: { lesson: 1 }
+      },
+      {
+        // Bước C: Định hình lại các trường dữ liệu trả về (Projection)
+        $project: {
+          _id: 1,      // Giữ lại _id
+          kanji: 1,    // Giữ lại kanji
+          meaning: 1,  // Giữ lại meaning
+          partOfSpeech: 1, // Giữ lại partOfSpeech
+
+          // Tự động lấy hiragana hoặc katakana dựa vào giá trị của defaultScript
+          reading: {
+            $cond: {
+              if: { $eq: ["$defaultScript", "katakana"] },
+              then: "$katakana",
+              else: "$hiragana"
+            }
+          }
+        }
+      }
+    ]);
+
+    // 3. Trả về kết quả thành công cho Client
+    return successResponse(res, data, "Lấy từ vựng theo nhiều bài và phân loại thành công", {
+      total: data.length,
+    });
+
+  } catch (err) {
+    // Trả về lỗi nếu có sự cố xảy ra
+    return errorResponse(res, err.message);
+  }
+};
+
+
+export const getVocabByPartOfSpeech = async (req, res) => {
+  try {
+    const validTypes = [
+      "noun",
+      "verb_g_1",
+      "verb_g_2",
+      "verb_g_3",
+      "adj_i",
+      "adj_na",
+      "adverb",
+      "conjunction",
+      "pronoun",
+      "interjection",
+      "expression",
+      "counter",
+      "prefix",
+      "suffix",
+    ];
+    const { pos } = req.params;
+
+    // validate
+    if (!validTypes.includes(pos)) {
+      return res.status(400).json({
+        success: false,
+        message: "partOfSpeech không hợp lệ",
+      });
+    }
+
+    // query data + count
+    const [data, total] = await Promise.all([
+      Vocabulary.find({ partOfSpeech: pos }),
+      Vocabulary.countDocuments({ partOfSpeech: pos }),
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      message: "Lọc từ vựng theo partOfSpeech thành công",
+      total, // 👈 tổng số từ
+      data,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
