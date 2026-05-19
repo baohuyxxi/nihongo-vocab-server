@@ -11,6 +11,8 @@ import {
   createManyVocab,
   getVocabByTopic,
   getAllVerbs,
+  getTest,
+  getVocabByPartOfSpeech
 } from "../controllers/vocab.controller.js"
 
 const router = express.Router()
@@ -37,5 +39,6 @@ router.get("/topic", getVocabByTopic)
 
 router.get("/verbs", getAllVerbs)
 
-
+router.get("/test", getTest)
+router.get("/part-of-speech/:pos", getVocabByPartOfSpeech)
 export default router

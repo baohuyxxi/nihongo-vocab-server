@@ -31,7 +31,30 @@ const vocabSchema = new mongoose.Schema(
         hanViet: { type: String }, // 人 → nhân
 
         // Loại từ
-        partOfSpeech: { type: String },
+        partOfSpeech: {
+            type: String,
+            enum: [
+                "noun",
+
+                "verb_g_1",
+                "verb_g_2",
+                "verb_g_3",
+
+                "adj_i",
+                "adj_na",
+
+                "adverb",
+                "conjunction",
+
+                "pronoun",
+                "interjection",
+
+                "expression",
+                "counter",
+                "prefix",
+                "suffix",
+            ],
+        },
 
         // Ví dụ
         example: {
