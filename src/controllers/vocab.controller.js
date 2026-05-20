@@ -55,6 +55,8 @@ export const reviewSession = async (req, res) => {
   try {
     const {
       lessons = "",
+      topics = "",
+      partsOfSpeech = "",
       mode = "flashcard",
       directions = "jp_vi",
     } = req.query
@@ -63,18 +65,28 @@ export const reviewSession = async (req, res) => {
         PARSE INPUT
     ====================== */
 
-    const rawList = lessons ? lessons.split(",") : []
+    const lessonArr = lessons
+      ? lessons
+        .split(",")
+        .map(Number)
+        .filter((x) => !isNaN(x))
+      : []
 
-    // ✅ tách lesson và topic
-    const lessonArr = rawList
-      .map((x) => Number(x))
-      .filter((x) => !isNaN(x))
+    const topicArr = topics
+      ? topics
+        .split(",")
+        .map((x) => x.toLowerCase().trim())
+      : []
 
-    const topicArr = rawList
-      .filter((x) => isNaN(Number(x)))
-      .map((x) => x.toLowerCase().trim())
+    const partOfSpeechArr = partsOfSpeech
+      ? partsOfSpeech
+        .split(",")
+        .map((x) => x.trim())
+      : []
 
-    const directionArr = directions.split(",")
+    const directionArr = directions
+      .split(",")
+      .map((x) => x.trim())
 
     /* ======================
         BUILD QUERY
@@ -82,20 +94,47 @@ export const reviewSession = async (req, res) => {
 
     const conditions = []
 
+    // lesson
     if (lessonArr.length) {
-      conditions.push({ lesson: { $in: lessonArr } })
+      conditions.push({
+        lesson: {
+          $in: lessonArr,
+        },
+      })
     }
 
+    // topic
     if (topicArr.length) {
-      conditions.push({ topic: { $in: topicArr } })
+      conditions.push({
+        topic: {
+          $in: topicArr.map(
+            (t) => new RegExp(`^${t}$`, "i")
+          ),
+        },
+      })
+    }
+
+    // part of speech
+    if (partOfSpeechArr.length) {
+      conditions.push({
+        partOfSpeech: {
+          $in: partOfSpeechArr,
+        },
+      })
     }
 
     let query = {}
 
+    // chỉ 1 filter
     if (conditions.length === 1) {
       query = conditions[0]
-    } else if (conditions.length > 1) {
-      query = { $or: conditions }
+    }
+
+    // nhiều filter => OR
+    if (conditions.length > 1) {
+      query = {
+        $or: conditions,
+      }
     }
 
     /* ======================
@@ -114,17 +153,28 @@ export const reviewSession = async (req, res) => {
       case "flashcard":
         data = buildFlashcards(vocabs, directionArr)
         break
+
       case "typing":
         data = buildTyping(vocabs, directionArr)
         break
+
       case "quiz":
-        data = buildQuizChoice(vocabs)
+        data = buildQuizChoice(vocabs, directionArr)
         break
+
       default:
         return errorResponse(res, "Mode không hợp lệ")
     }
 
-    return successResponse(res, data, "Tạo review session thành công")
+    return successResponse(
+      res,
+      data,
+      "Tạo review session thành công",
+      {
+        totalVocabs: vocabs.length,
+      }
+    )
+
   } catch (err) {
     return errorResponse(res, err.message)
   }
@@ -180,61 +230,174 @@ const buildFlashcards = (vocabs, directions) => {
   }
 }
 
-const buildTyping = (vocabs, directions) => {
+const buildQuizChoice = (vocabs, directions) => {
+
   const questions = []
 
   vocabs.forEach((v) => {
+
     directions.forEach((dir) => {
+
+      /* ======================
+          SAME TYPE POOL
+      ====================== */
+
+      const sameTypePool = vocabs.filter(
+        (x) =>
+          x._id.toString() !== v._id.toString() &&
+          x.partOfSpeech === v.partOfSpeech
+      )
+
+      /* ======================
+          SAME TOPIC POOL
+      ====================== */
+
+      const sameTopicPool = vocabs.filter(
+        (x) =>
+          x._id.toString() !== v._id.toString() &&
+          x.topic === v.topic
+      )
+
+      /* ======================
+          PRIORITY
+      ====================== */
+
+      let distractors = []
+
+      // ưu tiên cùng loại từ
+      distractors = shuffle(sameTypePool)
+
+      // chưa đủ => thêm cùng topic
+      if (distractors.length < 3) {
+
+        const remain = sameTopicPool.filter(
+          (x) =>
+            !distractors.some(
+              (d) => d._id.toString() === x._id.toString()
+            )
+        )
+
+        distractors = [
+          ...distractors,
+          ...shuffle(remain),
+        ]
+      }
+
+      // vẫn chưa đủ => random
+      if (distractors.length < 3) {
+
+        const remain = vocabs.filter(
+          (x) =>
+            x._id.toString() !== v._id.toString() &&
+            !distractors.some(
+              (d) => d._id.toString() === x._id.toString()
+            )
+        )
+
+        distractors = [
+          ...distractors,
+          ...shuffle(remain),
+        ]
+      }
+
+      /* ======================
+          TAKE 3
+      ====================== */
+
+      const wrongVocabs = distractors.slice(0, 3)
+
+      /* ======================
+          JP -> VI
+      ====================== */
+
       if (dir === "jp_vi") {
+
+        const wrong = wrongVocabs.map(
+          (x) => x.meaning
+        )
+
         questions.push({
           id: v._id,
-          question: getJP(v),
-          answer: v.meaning,
           direction: dir,
+
+          question: getJP(v),
+
+          correct: v.meaning,
+
+          choices: shuffle([
+            v.meaning,
+            ...wrong,
+          ]),
+
+          partOfSpeech: v.partOfSpeech,
+          topic: v.topic,
         })
       }
+
+      /* ======================
+          VI -> JP
+      ====================== */
 
       if (dir === "vi_jp") {
+
+        const wrong = wrongVocabs.map(
+          (x) => getJP(x)
+        )
+
         questions.push({
           id: v._id,
-          question: v.meaning,
-          answer: getJP(v),
           direction: dir,
+
+          question: v.meaning,
+
+          correct: getJP(v),
+
+          choices: shuffle([
+            getJP(v),
+            ...wrong,
+          ]),
+
+          partOfSpeech: v.partOfSpeech,
+          topic: v.topic,
         })
       }
 
-      /* ===== KANJI TYPING ===== */
-      if (dir === "kanji" && v.kanji && v.hanViet) {
-        questions.push({
-          id: v._id,
-          question: v.kanji,      // ✅ hỏi kanji
-          answer: v.hanViet,      // ✅ trả lời Hán Việt
-          direction: "kanji",
-        })
+      /* ======================
+          KANJI QUIZ
+      ====================== */
+
+      if (
+        dir === "kanji" &&
+        v.kanji
+      ) {
+
+        const wrong = wrongVocabs
+          .filter((x) => x.kanji)
+          .map((x) => x.kanji)
+
+        if (wrong.length >= 3) {
+
+          questions.push({
+            id: v._id,
+            direction: dir,
+
+            question: getJP(v),
+
+            correct: v.kanji,
+
+            choices: shuffle([
+              v.kanji,
+              ...wrong.slice(0, 3),
+            ]),
+
+            partOfSpeech: v.partOfSpeech,
+            topic: v.topic,
+          })
+        }
       }
+
     })
-  })
 
-  return {
-    mode: "typing",
-    total: questions.length,
-    questions: shuffle(questions),
-  }
-}
-
-
-const buildQuizChoice = (vocabs) => {
-  const meanings = vocabs.map((v) => v.meaning)
-
-  const questions = vocabs.map((v) => {
-    const wrong = shuffle(meanings.filter((m) => m !== v.meaning)).slice(0, 3)
-
-    return {
-      id: v._id,
-      question: getJP(v),
-      correct: v.meaning,
-      choices: shuffle([v.meaning, ...wrong]),
-    }
   })
 
   return {
@@ -243,7 +406,6 @@ const buildQuizChoice = (vocabs) => {
     questions: shuffle(questions),
   }
 }
-
 
 export const updateVocab = async (req, res) => {
   try {
