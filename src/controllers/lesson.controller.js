@@ -145,18 +145,33 @@ export const getAdverbsGrouped =
  */
 export const getDuplicateHiragana =
   async (req, res) => {
+
     try {
+
       const data =
         await Vocabulary.aggregate([
+
+          /* ======================
+              FILTER VALID DATA
+          ====================== */
+
           {
             $match: {
               hiragana: {
                 $exists: true,
-                $ne: null,
-                $ne: "",
+                $nin: [null, ""],
+              },
+
+              lesson: {
+                $exists: true,
+                $nin: [null, ""],
               },
             },
           },
+
+          /* ======================
+              GROUP BY HIRAGANA
+          ====================== */
 
           {
             $group: {
@@ -170,25 +185,57 @@ export const getDuplicateHiragana =
                 $push: {
                   _id: "$_id",
                   lesson: "$lesson",
-                  hiragana:
-                    "$hiragana",
+                  hiragana: "$hiragana",
                   kanji: "$kanji",
-                  meaning:
-                    "$meaning",
-                  partOfSpeech:
-                    "$partOfSpeech",
+                  meaning: "$meaning",
+                  partOfSpeech: "$partOfSpeech",
                 },
               },
             },
           },
+
+          /* ======================
+              CHECK MEANING UNIQUENESS
+          ====================== */
+
+          {
+            $addFields: {
+              uniqueMeanings: {
+                $size: {
+                  $setUnion: [
+                    {
+                      $map: {
+                        input: "$items",
+                        as: "i",
+                        in: "$$i.meaning",
+                      },
+                    },
+                    [],
+                  ],
+                },
+              },
+            },
+          },
+
+          /* ======================
+              REMOVE FULL DUPLICATE MEANING GROUPS
+          ====================== */
 
           {
             $match: {
               count: {
                 $gt: 1,
               },
+
+              uniqueMeanings: {
+                $gt: 1, // 🔥 nếu chỉ có 1 meaning duy nhất => bỏ
+              },
             },
           },
+
+          /* ======================
+              SORT
+          ====================== */
 
           {
             $sort: {
@@ -206,11 +253,12 @@ export const getDuplicateHiragana =
           total: data.length,
         }
       )
+
     } catch (err) {
+
       return errorResponse(
         res,
         err.message
       )
     }
   }
-
