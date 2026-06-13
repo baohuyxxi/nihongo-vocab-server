@@ -548,53 +548,6 @@ export const getAllVerbs = async (req, res) => {
   }
 }
 
-export const getTest = async (req, res) => {
-  try {
-    // 1. Lấy và chuyển đổi danh sách bài học từ query string thành mảng số
-    const lessons = req.query.lessons.split(",").map(Number);
-
-    // 2. Sử dụng Aggregation để lọc và định hình lại cấu trúc dữ liệu trả về
-    const data = await Vocabulary.aggregate([
-      {
-        // Bước A: Lọc các từ vựng theo bài học giống như điều kiện cũ
-        $match: {
-          lesson: { $in: lessons }
-        }
-      },
-      {
-        // Bước B: Sắp xếp theo thứ tự bài tăng dần
-        $sort: { lesson: 1 }
-      },
-      {
-        // Bước C: Định hình lại các trường dữ liệu trả về (Projection)
-        $project: {
-          _id: 1,      // Giữ lại _id
-          kanji: 1,    // Giữ lại kanji
-          meaning: 1,  // Giữ lại meaning
-          partOfSpeech: 1, // Giữ lại partOfSpeech
-
-          // Tự động lấy hiragana hoặc katakana dựa vào giá trị của defaultScript
-          reading: {
-            $cond: {
-              if: { $eq: ["$defaultScript", "katakana"] },
-              then: "$katakana",
-              else: "$hiragana"
-            }
-          }
-        }
-      }
-    ]);
-
-    // 3. Trả về kết quả thành công cho Client
-    return successResponse(res, data, "Lấy từ vựng theo nhiều bài và phân loại thành công", {
-      total: data.length,
-    });
-
-  } catch (err) {
-    // Trả về lỗi nếu có sự cố xảy ra
-    return errorResponse(res, err.message);
-  }
-};
 
 
 export const getVocabByPartOfSpeech = async (req, res) => {
@@ -642,5 +595,78 @@ export const getVocabByPartOfSpeech = async (req, res) => {
       success: false,
       message: error.message,
     });
+  }
+};
+
+
+
+export const getTest = async (req, res) => {
+  try {
+    const validPartOfSpeech = [
+      "noun",
+
+      "verb_g_1",
+      "verb_g_2",
+      "verb_g_3",
+
+      "adj_i",
+      "adj_na",
+
+      "adverb",
+      "conjunction",
+
+      "pronoun",
+      "interjection",
+
+      "expression",
+      "counter",
+      "prefix",
+      "suffix",
+    ];
+
+    const data = await Vocabulary.aggregate([
+      {
+        $match: {
+          partOfSpeech: {
+            $nin: validPartOfSpeech,
+          },
+        },
+      },
+      {
+        $project: {
+          _id: 1,
+          kanji: 1,
+          meaning: 1,
+          partOfSpeech: 1,
+          hiragana: {
+            $cond: {
+              if: { $eq: ["$defaultScript", "katakana"] },
+              then: "$katakana",
+              else: "$hiragana",
+            },
+          },
+        },
+      },
+      {
+        $sort: {
+          lesson: 1,
+          _id: 1,
+        },
+      },
+      {
+        $limit: 50,
+      },
+    ]);
+
+    return successResponse(
+      res,
+      data,
+      "Lấy 50 từ vựng chưa có hoặc có loại từ không hợp lệ thành công",
+      {
+        total: data.length,
+      }
+    );
+  } catch (err) {
+    return errorResponse(res, err.message);
   }
 };
