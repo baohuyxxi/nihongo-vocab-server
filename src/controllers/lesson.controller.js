@@ -264,9 +264,16 @@ export const getDuplicateHiragana =
   }
 
 
- export const getKanjiFrequency =
+export const getKanjiFrequency =
   async (req, res) => {
+
     try {
+
+      const page =
+        Number(req.query.page) || 1
+
+      const limit =
+        Number(req.query.limit) || 50
 
       const vocabs =
         await Vocabulary.find(
@@ -316,8 +323,6 @@ export const getDuplicateHiragana =
             }
           }
 
-          // chống trùng:
-          // cùng kanji + cùng hiragana + cùng katakana
           const wordKey =
             `${vocab.kanji}|${vocab.hiragana || ""}|${vocab.katakana || ""}`
 
@@ -354,8 +359,21 @@ export const getDuplicateHiragana =
 
             kanji: item.kanji,
 
+            // lấy Hán Việt đầu tiên
+            hanViet:
+              item.words.find(
+                w => w.hanViet
+              )?.hanViet || "",
+
             count:
               item.words.length,
+
+            lessonCount:
+              new Set(
+                item.words.map(
+                  w => w.lesson
+                )
+              ).size,
 
             words:
               item.words.sort(
@@ -366,10 +384,10 @@ export const getDuplicateHiragana =
               ),
           }))
 
-          // chỉ lấy kanji xuất hiện trong >= 2 từ
+          // chỉ lấy Kanji có ít nhất 1 từ
           .filter(
             item =>
-              item.count >= 2
+              item.count >= 1
           )
 
           .sort(
@@ -377,13 +395,36 @@ export const getDuplicateHiragana =
               b.count - a.count
           )
 
+      const total =
+        data.length
+
+      const totalPages =
+        Math.ceil(
+          total / limit
+        )
+
+      const paginatedData =
+        data.slice(
+          (page - 1) * limit,
+          page * limit
+        )
+
+        const meta = {
+          page,
+          limit,
+          total,
+          totalPages,
+          hasNext:
+            page < totalPages,
+          hasPrev:
+            page > 1,
+        }
+
       return successResponse(
         res,
-        data,
+        paginatedData,
         "Lấy tần suất Kanji thành công",
-        {
-          total: data.length,
-        }
+        meta 
       )
 
     } catch (err) {
