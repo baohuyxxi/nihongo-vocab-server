@@ -3,7 +3,7 @@ import {
     successResponse,
     errorResponse,
 } from "../utils/response.js"
-
+import mongoose from "mongoose";
 /* =========================
    GET ALL + FILTER
 ========================= */
@@ -222,3 +222,72 @@ export const getGrammarByLesson = async (req, res) => {
     return errorResponse(res, err.message)
   }
 }
+
+export const migrateGrammarLinks = async (req, res) => {
+    try {
+
+        const collection =
+            mongoose.connection.collection("grammars");
+
+        const grammars =
+            await collection.find({}).toArray();
+
+        let updated = 0;
+
+        for (const grammar of grammars) {
+
+            let changed = false;
+
+            const structure =
+                (grammar.structure || []).map(node => {
+
+                    // links kiểu cũ
+                    if (
+                        Array.isArray(node.links) &&
+                        node.links.length > 0 &&
+                        typeof node.links[0] === "object" &&
+                        node.links[0] !== null &&
+                        "to" in node.links[0]
+                    ) {
+
+                        changed = true;
+
+                        return {
+                            ...node,
+                            links: node.links
+                                .map(link => link.to)
+                                .filter(to => to !== undefined),
+                        };
+                    }
+
+                    return node;
+                });
+
+            if (changed) {
+
+                await collection.updateOne(
+                    { _id: grammar._id },
+                    {
+                        $set: {
+                            structure,
+                        },
+                    }
+                );
+
+                updated++;
+            }
+        }
+
+        return res.json({
+            success: true,
+            message: `Đã migrate ${updated} grammar`,
+        });
+
+    } catch (err) {
+
+        return res.status(500).json({
+            success: false,
+            message: err.message,
+        });
+    }
+};

@@ -8,6 +8,7 @@ import {
   getAllAdverbs,
   getAdverbsGrouped,
   getDuplicateHiragana,
+  getKanjiFrequency,
 } from "../controllers/lesson.controller.js"
 
 const router = express.Router()
@@ -24,6 +25,12 @@ router.get(
 router.get(
   "/duplicate-hiragana",
   getDuplicateHiragana
+)
+
+/* ✅ KANJI */
+router.get(
+  "/kanji-frequency",
+  getKanjiFrequency
 )
 
 /* ✅ LESSON */

@@ -8,6 +8,7 @@ import {
     updateGrammar,
     deleteGrammar,
     bulkSaveGrammar,
+    migrateGrammarLinks
 } from "../controllers/grammar.controller.js"
 
 const router = express.Router()
@@ -39,5 +40,10 @@ router.delete("/:id", deleteGrammar)
  * BULK SAVE
  * ======================= */
 router.post("/bulk-save", bulkSaveGrammar)
+
+router.post(
+    "/migrate-links",
+    migrateGrammarLinks
+);
 
 export default router
