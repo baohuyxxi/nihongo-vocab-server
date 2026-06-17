@@ -262,3 +262,135 @@ export const getDuplicateHiragana =
       )
     }
   }
+
+
+ export const getKanjiFrequency =
+  async (req, res) => {
+    try {
+
+      const vocabs =
+        await Vocabulary.find(
+          {
+            kanji: {
+              $exists: true,
+              $nin: [null, ""],
+            },
+
+            lesson: {
+              $type: "number",
+              $gt: 0,
+            },
+          },
+          {
+            kanji: 1,
+            hiragana: 1,
+            katakana: 1,
+            meaning: 1,
+            hanViet: 1,
+            lesson: 1,
+            partOfSpeech: 1,
+          }
+        ).lean()
+
+      const kanjiMap = {}
+
+      for (const vocab of vocabs) {
+
+        const uniqueKanji =
+          [...new Set(
+            [...vocab.kanji].filter(
+              char =>
+                /[\u3400-\u4DBF\u4E00-\u9FFF]/u
+                  .test(char)
+            )
+          )]
+
+        for (const kanji of uniqueKanji) {
+
+          if (!kanjiMap[kanji]) {
+
+            kanjiMap[kanji] = {
+              kanji,
+              words: [],
+              wordSet: new Set(),
+            }
+          }
+
+          // chống trùng:
+          // cùng kanji + cùng hiragana + cùng katakana
+          const wordKey =
+            `${vocab.kanji}|${vocab.hiragana || ""}|${vocab.katakana || ""}`
+
+          if (
+            !kanjiMap[kanji]
+              .wordSet
+              .has(wordKey)
+          ) {
+
+            kanjiMap[kanji]
+              .wordSet
+              .add(wordKey)
+
+            kanjiMap[kanji]
+              .words
+              .push({
+                kanji: vocab.kanji,
+                hiragana: vocab.hiragana,
+                katakana: vocab.katakana,
+                meaning: vocab.meaning,
+                hanViet: vocab.hanViet,
+                lesson: vocab.lesson,
+                partOfSpeech:
+                  vocab.partOfSpeech,
+              })
+          }
+        }
+      }
+
+      const data =
+        Object.values(kanjiMap)
+
+          .map(item => ({
+
+            kanji: item.kanji,
+
+            count:
+              item.words.length,
+
+            words:
+              item.words.sort(
+                (a, b) =>
+                  (a.lesson || 999)
+                  -
+                  (b.lesson || 999)
+              ),
+          }))
+
+          // chỉ lấy kanji xuất hiện trong >= 2 từ
+          .filter(
+            item =>
+              item.count >= 2
+          )
+
+          .sort(
+            (a, b) =>
+              b.count - a.count
+          )
+
+      return successResponse(
+        res,
+        data,
+        "Lấy tần suất Kanji thành công",
+        {
+          total: data.length,
+        }
+      )
+
+    } catch (err) {
+
+      return errorResponse(
+        res,
+        err.message
+      )
+    }
+  }
