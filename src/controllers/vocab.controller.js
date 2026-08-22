@@ -670,3 +670,50 @@ export const getTest = async (req, res) => {
     return errorResponse(res, err.message);
   }
 };
+
+export const getVocabWithoutImage = async (req, res) => {
+    try {
+        const filter = {
+            partOfSpeech: "noun",
+            $or: [
+                { image: { $exists: false } },
+                { image: null },
+                { image: "" },
+            ],
+        }
+
+        // Lấy ngẫu nhiên 1 từ
+        const [result] = await Vocabulary.aggregate([
+            { $match: filter },
+            { $sample: { size: 1 } },
+        ])
+
+        // Đếm số từ còn lại
+        const remaining = await Vocabulary.countDocuments(filter)
+
+        if (!result) {
+            return res.status(404).json({
+                success: false,
+                message: "Không còn danh từ nào chưa có ảnh",
+                data: null,
+                remaining: 0,
+            })
+        }
+
+        return res.json({
+            success: true,
+            message: "Lấy từ vựng chưa có ảnh thành công",
+            data: result,
+            remaining,
+        })
+
+    } catch (error) {
+        console.error("getVocabWithoutImage:", error)
+
+        return res.status(500).json({
+            success: false,
+            message: "Lỗi server",
+            error: error.message,
+        })
+    }
+}
