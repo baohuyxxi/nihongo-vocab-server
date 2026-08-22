@@ -12,7 +12,8 @@ import {
   getVocabByTopic,
   getAllVerbs,
   getTest,
-  getVocabByPartOfSpeech
+  getVocabByPartOfSpeech,
+  getVocabWithoutImage
 } from "../controllers/vocab.controller.js"
 
 const router = express.Router()
@@ -41,4 +42,5 @@ router.get("/verbs", getAllVerbs)
 
 router.get("/test", getTest)
 router.get("/part-of-speech/:pos", getVocabByPartOfSpeech)
+router.get("/without-image", getVocabWithoutImage)
 export default router
