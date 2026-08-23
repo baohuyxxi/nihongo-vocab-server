@@ -190,6 +190,11 @@ const buildFlashcards = (vocabs, directions) => {
 
   vocabs.forEach((v) => {
     directions.forEach((dir) => {
+
+      /* ======================
+          JP → VI
+      ====================== */
+
       if (dir === "jp_vi") {
         cards.push({
           id: v._id,
@@ -199,6 +204,11 @@ const buildFlashcards = (vocabs, directions) => {
         })
       }
 
+
+      /* ======================
+          VI → JP
+      ====================== */
+
       if (dir === "vi_jp") {
         cards.push({
           id: v._id,
@@ -207,6 +217,11 @@ const buildFlashcards = (vocabs, directions) => {
           direction: dir,
         })
       }
+
+
+      /* ======================
+          KANJI
+      ====================== */
 
       if (dir === "kanji" && v.kanji) {
         cards.push({
@@ -220,6 +235,39 @@ const buildFlashcards = (vocabs, directions) => {
           direction: dir,
         })
       }
+
+
+      /* ======================
+          IMAGE
+      ====================== */
+
+      if (dir === "image") {
+        if (v.image === undefined || v.image === null || v.image === "") {
+          console.log(v.image)
+
+        }
+        else {
+          cards.push({
+            id: v._id,
+
+            front: {
+              type: "image",
+              value: v.image,
+            },
+
+            back: {
+              jp: getJP(v),
+              meaning: v.meaning,
+              kanji: v.kanji || null,
+              hiragana: v.hiragana || null,
+            },
+
+            direction: dir,
+          })
+        }
+
+      }
+
     })
   })
 
@@ -672,48 +720,48 @@ export const getTest = async (req, res) => {
 };
 
 export const getVocabWithoutImage = async (req, res) => {
-    try {
-        const filter = {
-            partOfSpeech: "noun",
-            $or: [
-                { image: { $exists: false } },
-                { image: null },
-                { image: "" },
-            ],
-        }
-
-        // Lấy ngẫu nhiên 1 từ
-        const [result] = await Vocabulary.aggregate([
-            { $match: filter },
-            { $sample: { size: 1 } },
-        ])
-
-        // Đếm số từ còn lại
-        const remaining = await Vocabulary.countDocuments(filter)
-
-        if (!result) {
-            return res.status(404).json({
-                success: false,
-                message: "Không còn danh từ nào chưa có ảnh",
-                data: null,
-                remaining: 0,
-            })
-        }
-
-        return res.json({
-            success: true,
-            message: "Lấy từ vựng chưa có ảnh thành công",
-            data: result,
-            remaining,
-        })
-
-    } catch (error) {
-        console.error("getVocabWithoutImage:", error)
-
-        return res.status(500).json({
-            success: false,
-            message: "Lỗi server",
-            error: error.message,
-        })
+  try {
+    const filter = {
+      partOfSpeech: "noun",
+      $or: [
+        { image: { $exists: false } },
+        { image: null },
+        { image: "" },
+      ],
     }
+
+    // Lấy ngẫu nhiên 1 từ
+    const [result] = await Vocabulary.aggregate([
+      { $match: filter },
+      { $sample: { size: 1 } },
+    ])
+
+    // Đếm số từ còn lại
+    const remaining = await Vocabulary.countDocuments(filter)
+
+    if (!result) {
+      return res.status(404).json({
+        success: false,
+        message: "Không còn danh từ nào chưa có ảnh",
+        data: null,
+        remaining: 0,
+      })
+    }
+
+    return res.json({
+      success: true,
+      message: "Lấy từ vựng chưa có ảnh thành công",
+      data: result,
+      remaining,
+    })
+
+  } catch (error) {
+    console.error("getVocabWithoutImage:", error)
+
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi server",
+      error: error.message,
+    })
+  }
 }
