@@ -424,7 +424,7 @@ export const reviewSession = async (req, res) => {
         isNewSession,
         limit:
           reviewLimit,
-        progress: {
+          progress: {
           selectedVocabs:
             orderedVocabs.length,
           reviewedVocabs:
