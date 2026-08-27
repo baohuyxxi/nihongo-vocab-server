@@ -1,4 +1,5 @@
 import Vocabulary from "../models/Vocabulary.js"
+import ReviewHistory from "../models/ReviewHistory.js"
 import { successResponse, errorResponse } from "../utils/response.js"
 import { shuffle } from "../utils/shuffle.js"
 
@@ -53,136 +54,413 @@ export const getVocabByLessons = async (req, res) => {
 
 export const reviewSession = async (req, res) => {
   try {
+
     const {
+      reviewId = "",
       lessons = "",
       topics = "",
       partsOfSpeech = "",
       mode = "flashcard",
       directions = "jp_vi",
+      limit = "",
     } = req.query
 
-    /* ======================
-        PARSE INPUT
-    ====================== */
-
-    const lessonArr = lessons
-      ? lessons
-        .split(",")
-        .map(Number)
-        .filter((x) => !isNaN(x))
-      : []
-
-    const topicArr = topics
-      ? topics
-        .split(",")
-        .map((x) => x.toLowerCase().trim())
-      : []
-
-    const partOfSpeechArr = partsOfSpeech
-      ? partsOfSpeech
-        .split(",")
-        .map((x) => x.trim())
-      : []
-
-    const directionArr = directions
-      .split(",")
-      .map((x) => x.trim())
 
     /* ======================
-        BUILD QUERY
+        LIMIT
     ====================== */
+
+    const reviewLimit =
+      Number(limit) > 0
+        ? Number(limit)
+        : null
+
+
+    /* ======================
+        FIND SESSION
+    ====================== */
+
+    let history = null
+    let isNewSession = false
+
+
+    if (reviewId) {
+
+      history =
+        await ReviewHistory.findById(
+          reviewId
+        )
+
+      if (!history) {
+
+        return errorResponse(
+          res,
+          "Review session không tồn tại hoặc đã hết hạn"
+        )
+
+      }
+
+    }
+    let lessonArr = []
+    let topicArr = []
+    let partOfSpeechArr = []
+    let directionArr = []
+    let currentMode = mode
+    if (history) {
+      try {
+        const savedConfig =
+          JSON.parse(
+            history.configKey
+          )
+        lessonArr =
+          savedConfig.lessons || []
+        topicArr =
+          savedConfig.topics || []
+        partOfSpeechArr =
+          savedConfig.partsOfSpeech || []
+        directionArr =
+          savedConfig.directions || []
+        currentMode =
+          savedConfig.mode ||
+          "flashcard"
+      }
+      catch (err) {
+        return errorResponse(
+          res,
+          "Config của review session không hợp lệ"
+        )
+      }
+      history.updatedAt =
+        new Date()
+      await history.save()
+    }
+    else {
+      lessonArr =
+        lessons
+          ? lessons
+              .split(",")
+              .map(Number)
+              .filter(
+                (x) =>
+                  !isNaN(x)
+              )
+          : []
+      topicArr =
+        topics
+          ? topics
+              .split(",")
+              .map(
+                (x) =>
+                  x
+                    .toLowerCase()
+                    .trim()
+              )
+              .filter(Boolean)
+          : []
+      partOfSpeechArr =
+        partsOfSpeech
+          ? partsOfSpeech
+              .split(",")
+              .map(
+                (x) =>
+                  x.trim()
+              )
+              .filter(Boolean)
+          : []
+      directionArr =
+        directions
+          .split(",")
+          .map(
+            (x) =>
+              x.trim()
+          )
+          .filter(Boolean)
+      currentMode =
+        mode
+      const configKey =
+        JSON.stringify({
+          lessons:
+            [...lessonArr]
+              .sort(),
+          topics:
+            [...topicArr]
+              .sort(),
+          partsOfSpeech:
+            [...partOfSpeechArr]
+              .sort(),
+          mode:
+            currentMode,
+          directions:
+            [...directionArr]
+              .sort(),
+        })
+      history =
+        await ReviewHistory.create({
+          configKey,
+          vocabIds: [],
+        })
+      isNewSession = true
+    }
 
     const conditions = []
-
-    // lesson
-    if (lessonArr.length) {
+    if (
+      lessonArr.length
+    ) {
       conditions.push({
         lesson: {
           $in: lessonArr,
         },
       })
-    }
 
-    // topic
-    if (topicArr.length) {
+    }
+    if (
+      topicArr.length
+    ) {
       conditions.push({
         topic: {
-          $in: topicArr.map(
-            (t) => new RegExp(`^${t}$`, "i")
-          ),
+          $in:
+            topicArr.map(
+              (topic) =>
+                new RegExp(
+                  `^${topic}$`,
+                  "i"
+                )
+            ),
         },
       })
     }
-
-    // part of speech
-    if (partOfSpeechArr.length) {
+    if (
+      partOfSpeechArr.length
+    ) {
       conditions.push({
+
         partOfSpeech: {
-          $in: partOfSpeechArr,
+          $in:
+            partOfSpeechArr,
         },
       })
     }
-
     let query = {}
-
-    // chỉ 1 filter
-    if (conditions.length === 1) {
-      query = conditions[0]
+    if (
+      conditions.length === 1
+    ) {
+      query =
+        conditions[0]
     }
-
-    // nhiều filter => OR
-    if (conditions.length > 1) {
+    else if (
+      conditions.length > 1
+    ) {
       query = {
         $or: conditions,
       }
+
     }
+    const allVocabs =
+      await Vocabulary.find(
+        query
+      )
+        .select("_id")
+    const allIds =
+      allVocabs.map(
+        (vocab) =>
+          vocab._id
+      )
+    const totalVocabs =
+      allIds.length
+    const reviewedIds =
+      history.vocabIds || []
+    const reviewedSet =
+      new Set(
+        reviewedIds.map(
+          (id) =>
+            id.toString()
+        )
+      )
+    let remainingIds =
+      allIds.filter(
+        (id) =>
+          !reviewedSet.has(
+            id.toString()
+          )
+      )
+    if (
+      remainingIds.length === 0
+    ) {
+      return successResponse(
+        res,
+        {
+          mode:
+            currentMode,
+          total: 0,
+          cards: [],
+          questions: [],
+        },
+        "Đã lấy hết toàn bộ từ trong session",
+        {
+          reviewId:
+            history._id,
+          isNewSession,
+          progress: {
+            selectedVocabs: 0,
+            reviewedVocabs:
+              reviewedIds.length,
+            total:
+              totalVocabs,
+            limit:
+              reviewLimit,
+            remaining: 0,
+            completed: true,
+          },
 
-    /* ======================
-        FETCH DATA
-    ====================== */
+        }
 
-    const vocabs = await Vocabulary.find(query)
+      )
 
-    /* ======================
-        BUILD DATA
-    ====================== */
+    }
+    remainingIds =
+      shuffle(
+        remainingIds
+      )
+    const selectedIds =
+      reviewLimit
+        ? remainingIds.slice(
+            0,
+            reviewLimit
+          )
+        : remainingIds
+    if (
+      selectedIds.length > 0
+    ) {
 
+      history.vocabIds.push(
+        ...selectedIds
+      )
+
+      await history.save()
+
+    }
+    const vocabs =
+      await Vocabulary.find({
+
+        _id: {
+          $in: selectedIds,
+        },
+
+      })
+
+    const vocabMap =
+      new Map(
+
+        vocabs.map(
+          (vocab) => [
+
+            vocab._id.toString(),
+
+            vocab,
+
+          ]
+        )
+
+      )
+    const orderedVocabs =
+      selectedIds
+        .map(
+          (id) =>
+            vocabMap.get(
+              id.toString()
+            )
+        )
+        .filter(Boolean)
     let data
+    switch (
+      currentMode
+    ) {
 
-    switch (mode) {
       case "flashcard":
-        data = buildFlashcards(vocabs, directionArr)
-        break
 
+        data =
+          buildFlashcards(
+            orderedVocabs,
+            directionArr
+          )
+
+        break
       case "typing":
-        data = buildTyping(vocabs, directionArr)
+        data =
+          buildTyping(
+            orderedVocabs,
+            directionArr
+          )
         break
-
       case "quiz":
-        data = buildQuizChoice(vocabs, directionArr)
+        data =
+          buildQuizChoice(
+            orderedVocabs,
+            directionArr
+          )
         break
-
       default:
-        return errorResponse(res, "Mode không hợp lệ")
-    }
+        return errorResponse(
+          res,
+          "Mode không hợp lệ"
+        )
 
+    }
+    const reviewedVocabs =
+      history.vocabIds.length
+    const remaining =
+      Math.max(
+        0,
+        totalVocabs -
+        reviewedVocabs
+      )
     return successResponse(
       res,
       data,
       "Tạo review session thành công",
       {
-        totalVocabs: vocabs.length,
+        reviewId:
+          history._id,
+        isNewSession,
+        limit:
+          reviewLimit,
+        progress: {
+          selectedVocabs:
+            orderedVocabs.length,
+          reviewedVocabs:
+            reviewedVocabs,
+          total:
+            totalVocabs,
+          limit:
+            reviewLimit,
+          remaining:
+            remaining,
+
+
+          completed:
+            remaining === 0,
+
+        },
+
       }
+
     )
 
-  } catch (err) {
-    return errorResponse(res, err.message)
+  }
+  catch (err) {
+
+    console.error(
+      "reviewSession:",
+      err
+    )
+
+    return errorResponse(
+      res,
+      err.message
+    )
+
   }
 }
-/* =========================
-   BUILDERS
-========================= */
-
 const getJP = (v) => v.hiragana || v.katakana || v.romaji || ""
 
 const buildFlashcards = (vocabs, directions) => {
@@ -763,5 +1041,124 @@ export const getVocabWithoutImage = async (req, res) => {
       message: "Lỗi server",
       error: error.message,
     })
+  }
+}
+
+export const completeReviewVocab = async (
+  req,
+  res
+) => {
+
+  try {
+
+    const {
+      reviewId,
+      vocabId,
+    } = req.params
+
+
+    /* ======================
+        VALIDATE
+    ====================== */
+
+    if (!reviewId) {
+
+      return errorResponse(
+        res,
+        "Thiếu reviewId"
+      )
+
+    }
+
+
+    if (!vocabId) {
+
+      return errorResponse(
+        res,
+        "Thiếu vocabId"
+      )
+
+    }
+
+
+    /* ======================
+        FIND SESSION
+    ====================== */
+
+    const history =
+      await ReviewHistory.findById(
+        reviewId
+      )
+
+
+    if (!history) {
+
+      return errorResponse(
+        res,
+        "Review session không tồn tại hoặc đã hết hạn"
+      )
+
+    }
+
+
+    /* ======================
+        REMOVE VOCAB
+    ====================== */
+
+    history.vocabIds =
+      history.vocabIds.filter(
+        (id) =>
+          id.toString() !==
+          vocabId.toString()
+      )
+
+
+    /* ======================
+        REFRESH TTL
+    ====================== */
+
+    history.updatedAt =
+      new Date()
+
+
+    await history.save()
+
+
+    /* ======================
+        RESPONSE
+    ====================== */
+
+    return successResponse(
+
+      res,
+
+      {
+        reviewId:
+          history._id,
+
+        remaining:
+          history.vocabIds.length,
+
+        completed:
+          history.vocabIds.length === 0,
+      },
+
+      "Đã hoàn thành từ vựng"
+
+    )
+
+  }
+  catch (err) {
+
+    console.error(
+      "completeReviewVocab:",
+      err
+    )
+
+    return errorResponse(
+      res,
+      err.message
+    )
+
   }
 }
