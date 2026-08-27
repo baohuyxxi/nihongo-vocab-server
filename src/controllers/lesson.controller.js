@@ -3,7 +3,9 @@
 import Lesson from "../models/Lesson.js"
 
 import Vocabulary from "../models/Vocabulary.js"
-
+import {
+    resolveKanjiHanViet,
+} from "../utils/kanjiHanViet.js"
 import {
   successResponse,
   errorResponse,
@@ -265,173 +267,465 @@ export const getDuplicateHiragana =
 
 
 export const getKanjiFrequency =
-  async (req, res) => {
+    async (req, res) => {
 
-    try {
+        try {
 
-      const page =
-        Number(req.query.page) || 1
-
-      const limit =
-        Number(req.query.limit) || 50
-
-      const vocabs =
-        await Vocabulary.find(
-          {
-            kanji: {
-              $exists: true,
-              $nin: [null, ""],
-            },
-
-            lesson: {
-              $type: "number",
-              $gt: 0,
-            },
-          },
-          {
-            kanji: 1,
-            hiragana: 1,
-            katakana: 1,
-            meaning: 1,
-            hanViet: 1,
-            lesson: 1,
-            partOfSpeech: 1,
-          }
-        ).lean()
-
-      const kanjiMap = {}
-
-      for (const vocab of vocabs) {
-
-        const uniqueKanji =
-          [...new Set(
-            [...vocab.kanji].filter(
-              char =>
-                /[\u3400-\u4DBF\u4E00-\u9FFF]/u
-                  .test(char)
-            )
-          )]
-
-        for (const kanji of uniqueKanji) {
-
-          if (!kanjiMap[kanji]) {
-
-            kanjiMap[kanji] = {
-              kanji,
-              words: [],
-              wordSet: new Set(),
-            }
-          }
-
-          const wordKey =
-            `${vocab.kanji}|${vocab.hiragana || ""}|${vocab.katakana || ""}`
-
-          if (
-            !kanjiMap[kanji]
-              .wordSet
-              .has(wordKey)
-          ) {
-
-            kanjiMap[kanji]
-              .wordSet
-              .add(wordKey)
-
-            kanjiMap[kanji]
-              .words
-              .push({
-                kanji: vocab.kanji,
-                hiragana: vocab.hiragana,
-                katakana: vocab.katakana,
-                meaning: vocab.meaning,
-                hanViet: vocab.hanViet,
-                lesson: vocab.lesson,
-                partOfSpeech:
-                  vocab.partOfSpeech,
-              })
-          }
-        }
-      }
-
-      const data =
-        Object.values(kanjiMap)
-
-          .map(item => ({
-
-            kanji: item.kanji,
-
-            // lấy Hán Việt đầu tiên
-            hanViet:
-              item.words.find(
-                w => w.hanViet
-              )?.hanViet || "",
-
-            count:
-              item.words.length,
-
-            lessonCount:
-              new Set(
-                item.words.map(
-                  w => w.lesson
+            const page =
+                Math.max(
+                    1,
+                    Number(
+                        req.query.page
+                    ) || 1
                 )
-              ).size,
 
-            words:
-              item.words.sort(
-                (a, b) =>
-                  (a.lesson || 999)
-                  -
-                  (b.lesson || 999)
-              ),
-          }))
 
-          // chỉ lấy Kanji có ít nhất 1 từ
-          .filter(
-            item =>
-              item.count >= 1
-          )
+            const limit =
+                Math.max(
+                    1,
+                    Number(
+                        req.query.limit
+                    ) || 50
+                )
 
-          .sort(
-            (a, b) =>
-              b.count - a.count
-          )
 
-      const total =
-        data.length
+            /*
+             * =================================================
+             * LẤY VOCABULARY
+             * =================================================
+             */
 
-      const totalPages =
-        Math.ceil(
-          total / limit
-        )
+            const vocabs =
+                await Vocabulary.find(
+                    {
+                        kanji: {
+                            $exists: true,
+                            $nin: [
+                                null,
+                                "",
+                            ],
+                        },
 
-      const paginatedData =
-        data.slice(
-          (page - 1) * limit,
-          page * limit
-        )
+                        lesson: {
+                            $type: "number",
+                            $gt: 0,
+                        },
+                    },
 
-        const meta = {
-          page,
-          limit,
-          total,
-          totalPages,
-          hasNext:
-            page < totalPages,
-          hasPrev:
-            page > 1,
+                    {
+                        kanji: 1,
+                        hiragana: 1,
+                        katakana: 1,
+                        meaning: 1,
+                        hanViet: 1,
+                        lesson: 1,
+                        partOfSpeech: 1,
+                    }
+                ).lean()
+
+
+            /*
+             * =================================================
+             * KANJI MAP
+             * =================================================
+             *
+             * {
+             *   "日": {
+             *      kanji: "日",
+             *      words: [],
+             *      wordSet: Set()
+             *   }
+             * }
+             */
+
+            const kanjiMap = {}
+
+
+            /*
+             * =================================================
+             * DUYỆT TOÀN BỘ VOCAB
+             * =================================================
+             */
+
+            for (
+                const vocab of vocabs
+            ) {
+
+                if (
+                    !vocab.kanji ||
+                    typeof vocab.kanji !==
+                        "string"
+                ) {
+                    continue
+                }
+
+
+                /*
+                 * Lấy các Kanji duy nhất
+                 * trong vocabulary.
+                 *
+                 * Ví dụ:
+                 *
+                 * 日本
+                 * =>
+                 * ["日", "本"]
+                 *
+                 * ２、３日
+                 * =>
+                 * ["日"]
+                 */
+
+                const uniqueKanji =
+                    [
+                        ...new Set(
+                            [
+                                ...vocab.kanji,
+                            ].filter(
+                                char =>
+                                    /[\u3400-\u4DBF\u4E00-\u9FFF]/u
+                                        .test(char)
+                            )
+                        ),
+                    ]
+
+
+                if (
+                    !uniqueKanji.length
+                ) {
+                    continue
+                }
+
+
+                /*
+                 * =================================================
+                 * THÊM VOCAB VÀO TỪNG KANJI
+                 * =================================================
+                 */
+
+                for (
+                    const kanji of uniqueKanji
+                ) {
+
+                    if (
+                        !kanjiMap[kanji]
+                    ) {
+
+                        kanjiMap[kanji] = {
+
+                            kanji,
+
+                            words: [],
+
+                            wordSet:
+                                new Set(),
+
+                        }
+
+                    }
+
+
+                    /*
+                     * Key dùng để tránh
+                     * vocabulary bị duplicate.
+                     */
+
+                    const wordKey =
+                        `${vocab.kanji}|${vocab.hiragana || ""}|${vocab.katakana || ""}`
+
+
+                    if (
+                        kanjiMap[kanji]
+                            .wordSet
+                            .has(wordKey)
+                    ) {
+                        continue
+                    }
+
+
+                    kanjiMap[kanji]
+                        .wordSet
+                        .add(wordKey)
+
+
+                    kanjiMap[kanji]
+                        .words
+                        .push({
+
+                            kanji:
+                                vocab.kanji,
+
+                            hiragana:
+                                vocab.hiragana,
+
+                            katakana:
+                                vocab.katakana,
+
+                            meaning:
+                                vocab.meaning,
+
+                            hanViet:
+                                vocab.hanViet,
+
+                            lesson:
+                                vocab.lesson,
+
+                            partOfSpeech:
+                                vocab.partOfSpeech,
+
+                        })
+
+                }
+
+            }
+
+
+            /*
+             * =================================================
+             * TẠO DATA KANJI
+             * =================================================
+             */
+
+            const data =
+                Object.values(
+                    kanjiMap
+                )
+
+                    .map(
+                        item => {
+
+                            /*
+                             * =====================================
+                             * TÌM HÁN VIỆT ĐÚNG CỦA KANJI
+                             * =====================================
+                             *
+                             * Utility sẽ:
+                             *
+                             * 1. Map theo vị trí.
+                             *
+                             *    昨日
+                             *    Tạc Nhật
+                             *
+                             *    昨 -> Tạc
+                             *    日 -> Nhật
+                             *
+                             * 2. Thống kê tất cả kết quả.
+                             *
+                             * 3. Chọn âm xuất hiện nhiều nhất.
+                             *
+                             * 4. Chỉ chấp nhận nếu > 50%.
+                             */
+
+                            const hanVietResult =
+                                resolveKanjiHanViet({
+
+                                    kanji:
+                                        item.kanji,
+
+                                    words:
+                                        item.words,
+
+                                })
+
+
+                            /*
+                             * Sort vocabulary
+                             * theo lesson.
+                             */
+
+                            const words =
+                                item.words.sort(
+                                    (a, b) =>
+                                        (
+                                            a.lesson ||
+                                            999
+                                        )
+                                        -
+                                        (
+                                            b.lesson ||
+                                            999
+                                        )
+                                )
+
+
+                            return {
+
+                                /*
+                                 * Kanji
+                                 */
+
+                                kanji:
+                                    item.kanji,
+
+
+                                /*
+                                 * Hán Việt chính xác
+                                 *
+                                 * Chỉ có giá trị khi
+                                 * confidence > 50%.
+                                 */
+
+                                hanViet:
+                                    hanVietResult.hanViet,
+
+
+                                /*
+                                 * Có thể giữ field này
+                                 * để debug / frontend.
+                                 *
+                                 * Ví dụ:
+                                 *
+                                 * 0.9231
+                                 *
+                                 * = 92.31%
+                                 */
+
+                                hanVietConfidence:
+                                    Number(
+                                        (
+                                            hanVietResult
+                                                .confidence
+                                        ).toFixed(4)
+                                    ),
+
+
+                                /*
+                                 * Số vocabulary
+                                 */
+
+                                count:
+                                    item.words.length,
+
+
+                                /*
+                                 * Số lesson khác nhau
+                                 */
+
+                                lessonCount:
+                                    new Set(
+                                        item.words.map(
+                                            w =>
+                                                w.lesson
+                                        )
+                                    ).size,
+
+
+                                /*
+                                 * Danh sách vocabulary
+                                 */
+
+                                words,
+
+                            }
+
+                        }
+                    )
+
+
+                    /*
+                     * =================================================
+                     * CHỈ LẤY KANJI CÓ VOCAB
+                     * =================================================
+                     */
+
+                    .filter(
+                        item =>
+                            item.count >= 1
+                    )
+
+
+                    /*
+                     * =================================================
+                     * SORT THEO FREQUENCY
+                     * =================================================
+                     */
+
+                    .sort(
+                        (a, b) =>
+                            b.count -
+                            a.count
+                    )
+
+
+            /*
+             * =================================================
+             * PAGINATION
+             * =================================================
+             */
+
+            const total =
+                data.length
+
+
+            const totalPages =
+                Math.ceil(
+                    total / limit
+                )
+
+
+            const paginatedData =
+                data.slice(
+                    (page - 1) * limit,
+                    page * limit
+                )
+
+
+            /*
+             * =================================================
+             * META
+             * =================================================
+             */
+
+            const meta = {
+
+                page,
+
+                limit,
+
+                total,
+
+                totalPages,
+
+                hasNext:
+                    page <
+                    totalPages,
+
+                hasPrev:
+                    page > 1,
+
+            }
+
+
+            /*
+             * =================================================
+             * RESPONSE
+             * =================================================
+             */
+
+            return successResponse(
+
+                res,
+
+                paginatedData,
+
+                "Lấy tần suất Kanji thành công",
+
+                meta
+
+            )
+
+        } catch (err) {
+
+            console.error(
+                "getKanjiFrequency Error:",
+                err
+            )
+
+
+            return errorResponse(
+                res,
+                err.message
+            )
+
         }
 
-      return successResponse(
-        res,
-        paginatedData,
-        "Lấy tần suất Kanji thành công",
-        meta 
-      )
-
-    } catch (err) {
-
-      return errorResponse(
-        res,
-        err.message
-      )
     }
-  }
