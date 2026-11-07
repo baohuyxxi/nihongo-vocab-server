@@ -5,40 +5,49 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 
 // ==========================================
+// CONFIG
+// ==========================================
+
+// Tạm thời vô hiệu hóa Kuromoji
+const KUROMOJI_ENABLED = false;
+
+// ==========================================
 // PATH
 // ==========================================
 
 const require = createRequire(import.meta.url);
 
-// Đường dẫn thực tế của file kuromoji.js
 const kuromojiEntry = require.resolve("kuromoji");
 
-// Thư mục node_modules/kuromoji/src
 const kuromojiSourceDir = path.dirname(kuromojiEntry);
 
-// Thư mục node_modules/kuromoji
-const kuromojiRoot = path.resolve(kuromojiSourceDir, "..");
+const kuromojiRoot = path.resolve(
+  kuromojiSourceDir,
+  ".."
+);
 
-// Đường dẫn node_modules/kuromoji/dict
-const DICT_PATH = path.join(kuromojiRoot, "dict");
+const DICT_PATH = path.join(
+  kuromojiRoot,
+  "dict"
+);
 
 const dictionaryFile = path.join(
   DICT_PATH,
   "base.dat.gz"
 );
 
-console.log("Kuromoji entry:", kuromojiEntry);
-console.log("Kuromoji package:", kuromojiRoot);
-console.log("Kuromoji dictionary:", DICT_PATH);
-console.log(
-  "Dictionary exists:",
-  fs.existsSync(dictionaryFile)
-);
+// Chỉ kiểm tra từ điển khi bật Kuromoji
+if (KUROMOJI_ENABLED) {
+  console.log("Kuromoji entry:", kuromojiEntry);
+  console.log("Kuromoji package:", kuromojiRoot);
+  console.log("Kuromoji dictionary:", DICT_PATH);
 
-if (!fs.existsSync(dictionaryFile)) {
-  throw new Error(
-    `Kuromoji dictionary not found: ${dictionaryFile}`
-  );
+  if (!fs.existsSync(dictionaryFile)) {
+    console.warn(
+      "Kuromoji dictionary not found:",
+      dictionaryFile
+    );
+  }
 }
 
 // ==========================================
@@ -49,6 +58,18 @@ let tokenizerInstance = null;
 let tokenizerPromise = null;
 
 const getTokenizer = async () => {
+  if (!KUROMOJI_ENABLED) {
+    throw new Error(
+      "Kuromoji is temporarily disabled"
+    );
+  }
+
+  if (!fs.existsSync(dictionaryFile)) {
+    throw new Error(
+      `Kuromoji dictionary not found: ${dictionaryFile}`
+    );
+  }
+
   if (tokenizerInstance) {
     return tokenizerInstance;
   }
@@ -59,7 +80,7 @@ const getTokenizer = async () => {
 
   tokenizerPromise = new Promise((resolve, reject) => {
     kuromoji.builder({
-      dictPath: DICT_PATH,
+      dicPath: DICT_PATH,
     }).build((error, tokenizer) => {
       if (error) {
         tokenizerPromise = null;
@@ -112,13 +133,17 @@ export const extractKanji = (text = "") => {
 
 export const analyzeJapaneseWord = async (word) => {
   if (!word || typeof word !== "string") {
-    throw new Error("Word must be a non-empty string");
+    throw new Error(
+      "Word must be a non-empty string"
+    );
   }
 
   const normalizedWord = word.trim();
 
   if (!normalizedWord) {
-    throw new Error("Word must not be empty");
+    throw new Error(
+      "Word must not be empty"
+    );
   }
 
   const tokenizer = await getTokenizer();
