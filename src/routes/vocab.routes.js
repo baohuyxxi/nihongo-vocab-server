@@ -3,6 +3,7 @@ import {
   getAllVocab,
   getVocabByLesson,
   getVocabByLessons,
+  getVocabByUnit,
   reviewSession,
   updateVocab,
   bulkUpdateVocab,
@@ -22,7 +23,7 @@ const router = express.Router()
 router.get("/", getAllVocab)
 router.get("/lesson/:lesson", getVocabByLesson)
 router.get("/lessons", getVocabByLessons)
-
+router.get("/unit", getVocabByUnit);
 
 /* REVIEW */
 router.get("/review-session", reviewSession)

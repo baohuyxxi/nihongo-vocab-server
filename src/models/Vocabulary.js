@@ -6,6 +6,9 @@ const vocabSchema = new mongoose.Schema(
         lesson: { type: Number }, // optional
 
         topic: { type: String },
+        unit: { type: Number },
+        n3Topic: { type: String },
+        n3Order: { type: Number },
 
         // Chữ viết
         kanji: { type: String },
