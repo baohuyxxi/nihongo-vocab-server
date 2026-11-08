@@ -35,6 +35,22 @@ const kanjiPopulate = {
   },
 };
 
+const normalizeStringList = (values = []) => {
+  const source = Array.isArray(values) ? values : values ? [values] : [];
+  return [...new Set(
+    source
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+  )];
+};
+
+const buildVocabularySyncInput = (payload = {}) => ({
+  onyomi: normalizeStringList(payload.onyomi),
+  kunyomi: normalizeStringList(payload.kunyomi),
+  hanViet: normalizeStringList(payload.hanViet),
+  meanings: normalizeStringList(payload.meanings),
+});
+
 // VALIDATE KANJI IDS
 const validateKanjiIds = async (kanjiIds) => {
   if (!Array.isArray(kanjiIds)) {
@@ -178,26 +194,48 @@ export const updateKanjiVocabulary = async (id, payload) => {
   const updateData = { ...payload };
 
   if (updateData.word !== undefined) {
-    if (!updateData.word.trim()) {
+    if (!String(updateData.word).trim()) {
       throwError("Word cannot be empty", 400);
     }
 
-    updateData.word = updateData.word.trim();
+    updateData.word = String(updateData.word).trim();
   }
 
-  if (updateData.kanjiIds !== undefined) {
-    updateData.kanjiIds = await validateKanjiIds(
-      updateData.kanjiIds
-    );
+  if (updateData.hiragana !== undefined) {
+    updateData.hiragana = String(updateData.hiragana).trim();
   }
 
-  return KanjiVocabulary.findByIdAndUpdate(
+  const word = String(updateData.word ?? current.word ?? "").trim();
+  const hiragana = String(updateData.hiragana ?? current.hiragana ?? "").trim();
+  const syncInput = buildVocabularySyncInput(updateData);
+
+  const syncResult = await syncKanjiFromWord(word, null, syncInput);
+
+  const mergedKanjiIds = [...new Set([
+    ...(current.kanjiIds || []).map((entry) => String(entry)),
+    ...(Array.isArray(updateData.kanjiIds) ? updateData.kanjiIds : []).map((entry) => String(entry)),
+    ...syncResult.kanjiIds.map((entry) => String(entry)),
+  ])];
+
+  updateData.kanjiIds = await validateKanjiIds(mergedKanjiIds);
+
+  if (!hiragana && word) {
+    updateData.hiragana = hiragana || "";
+  }
+
+  if (updateData.word !== undefined && !updateData.word?.trim()) {
+    throwError("Word cannot be empty", 400);
+  }
+
+  const result = await KanjiVocabulary.findByIdAndUpdate(
     id,
     { $set: updateData },
     { new: true, runValidators: true }
   )
     .populate(kanjiPopulate)
     .lean();
+
+  return result;
 };
 
 // DELETE
@@ -216,27 +254,81 @@ export const deleteKanjiVocabulary = async (id) => {
 };
 
 
-export const createKanjiVocabulary = async (data) => {
-  const { kanjiIds, analysis } = await syncKanjiFromWord(
-    data.word
-  );
+export const createKanjiVocabulary = async (data = {}) => {
+  const word = String(data.word || "").trim();
+
+  if (!word) {
+    throwError("Word is required", 400);
+  }
+
+  const hiragana = String(data.hiragana || data.reading || "").trim();
+  const syncInput = buildVocabularySyncInput(data);
+
+  const existing = await KanjiVocabulary.findOne({
+    word,
+    hiragana: hiragana || { $exists: true },
+  });
+
+  if (existing) {
+    const mergedPayload = {
+      ...existing.toObject(),
+      ...data,
+      word,
+      hiragana: hiragana || existing.hiragana,
+      kanjiIds: [...new Set([
+        ...(existing.kanjiIds || []).map((id) => String(id)),
+        ...(Array.isArray(data.kanjiIds) ? data.kanjiIds : []).map((id) => String(id)),
+      ])],
+    };
+
+    const syncResult = await syncKanjiFromWord(word, null, syncInput);
+    mergedPayload.kanjiIds = await validateKanjiIds([
+      ...new Set([
+        ...mergedPayload.kanjiIds.map((id) => String(id)),
+        ...syncResult.kanjiIds.map((id) => String(id)),
+      ]),
+    ]);
+
+    const updated = await KanjiVocabulary.findByIdAndUpdate(
+      existing._id,
+      { $set: mergedPayload },
+      { new: true, runValidators: true }
+    )
+      .populate(kanjiPopulate)
+      .lean();
+
+    return {
+      vocabulary: updated,
+      analysis: syncResult.analysis,
+      created: false,
+      updated: true,
+    };
+  }
+
+  const syncResult = await syncKanjiFromWord(word, null, syncInput);
+  const mergedKanjiIds = [...new Set([
+    ...(Array.isArray(data.kanjiIds) ? data.kanjiIds : []).map((id) => String(id)),
+    ...syncResult.kanjiIds.map((id) => String(id)),
+  ])];
 
   const vocabulary = await KanjiVocabulary.create({
     ...data,
-    kanjiIds,
-
-    // Lưu cách đọc mà tokenizer phân tích được.
-    readings: analysis.tokens
-      .filter((token) => token.reading)
-      .map((token) => ({
-        reading: token.reading,
-        type: "other",
-        note: `Phân tích từ: ${token.surface}`,
-      })),
+    word,
+    hiragana,
+    kanjiIds: await validateKanjiIds(mergedKanjiIds),
+    readings: Array.isArray(data.readings) && data.readings.length
+      ? data.readings
+      : (syncResult.analysis.tokens || []).filter((token) => token.reading).map((token) => ({
+          reading: token.reading,
+          type: "other",
+          note: `Phân tích từ: ${token.surface}`,
+        })),
   });
 
   return {
     vocabulary,
-    analysis,
+    analysis: syncResult.analysis,
+    created: true,
+    updated: false,
   };
 };
