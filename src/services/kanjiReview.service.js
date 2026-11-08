@@ -1,15 +1,18 @@
+
 import mongoose from "mongoose";
+
 import Kanji from "../models/Kanji.js";
 import KanjiCurriculumEntry from "../models/KanjiCurriculumEntry.js";
 import KanjiReviewHistory from "../models/KanjiReviewHistory.js";
 import KanjiVocabulary from "../models/KanjiVocabulary.js";
+
 import { shuffle } from "../utils/shuffle.js";
 
+// ==========================================
+// CONSTANTS
+// ==========================================
+
 export const REVIEW_CURRICULUM = "sou-matome-n3-kanji";
-
-const DEFAULT_KANJI_DIRECTIONS = ["kanji"];
-
-const DEFAULT_VOCAB_DIRECTIONS = ["kanji"];
 
 const VALID_DIRECTIONS = [
   "kanji",
@@ -24,41 +27,27 @@ const VALID_DIRECTIONS = [
   "meaning_vocab",
 ];
 
-const safeArray = (value) => {
-  if (Array.isArray(value)) return value.filter(Boolean);
-  if (typeof value === "string") return [value];
-  return [];
+const ALLOWED_DIRECTIONS = {
+  kanji: [
+    "kanji",
+    "kanji_meaning",
+    "meaning_kanji",
+    "onyomi",
+    "kunyomi",
+    "hanviet",
+  ],
+  vocabulary: [
+    "kanji",
+    "kanji_reading",
+    "reading_kanji",
+    "vocab_meaning",
+    "meaning_vocab",
+  ],
 };
 
-const unique = (items) => [...new Set(items.filter(Boolean))];
-
-const normalizeItemId = (value) => {
-  if (!value) return null;
-  const stringValue = String(value).trim();
-  if (!stringValue || !mongoose.Types.ObjectId.isValid(stringValue)) {
-    return null;
-  }
-  return stringValue;
-};
-
-const normalizeSelectionEntry = (item) => {
-  if (!item || typeof item !== "object") return null;
-
-  const itemType = item.itemType;
-  const itemId = normalizeItemId(item.itemId || item._id || item.id);
-
-  if (!itemType || !["kanji", "vocabulary"].includes(itemType) || !itemId) {
-    return null;
-  }
-
-  return { itemType, itemId };
-};
-
-const sanitizeSelectionList = (entries = []) => {
-  return (Array.isArray(entries) ? entries : [])
-    .map((entry) => normalizeSelectionEntry(entry))
-    .filter(Boolean);
-};
+// ==========================================
+// HELPERS
+// ==========================================
 
 const throwError = (message, status = 500) => {
   const error = new Error(message);
@@ -66,35 +55,134 @@ const throwError = (message, status = 500) => {
   throw error;
 };
 
+const asString = (value) => String(value ?? "").trim();
+
+const asArray = (value) => {
+  if (Array.isArray(value)) return value;
+  if (value === undefined || value === null || value === "") {
+    return [];
+  }
+  return [value];
+};
+
+const unique = (items) => [
+  ...new Set(items.filter(Boolean)),
+];
+
+const asReadings = (values) => {
+  return unique(
+    asArray(values).map((value) => {
+      if (typeof value === "object" && value !== null) {
+        return asString(value.reading ?? value.value);
+      }
+      return asString(value);
+    })
+  );
+};
+
+const asMeanings = (values) => {
+  return unique(asArray(values).map(asString));
+};
+
+const normalizeItemId = (value) => {
+  const id = asString(value);
+
+  if (
+    !mongoose.Types.ObjectId.isValid(id) ||
+    !/^[a-f\d]{24}$/i.test(id)
+  ) {
+    return null;
+  }
+
+  return id;
+};
+
+const normalizeSelectionEntry = (item) => {
+  if (!item || typeof item !== "object") return null;
+
+  const itemType = item.itemType;
+  const itemId = normalizeItemId(
+    item.itemId ?? item._id ?? item.id
+  );
+
+  if (
+    !["kanji", "vocabulary"].includes(itemType) ||
+    !itemId
+  ) {
+    return null;
+  }
+
+  return { itemType, itemId };
+};
+
+const sanitizeSelectionList = (items = []) => {
+  return asArray(items)
+    .map(normalizeSelectionEntry)
+    .filter(Boolean);
+};
+
+const selectionKey = ({ itemType, itemId }) => {
+  return `${itemType}:${itemId}`;
+};
+
+const uniqueSelections = (items) => {
+  const seen = new Set();
+
+  return items.filter((item) => {
+    const key = selectionKey(item);
+
+    if (seen.has(key)) return false;
+
+    seen.add(key);
+    return true;
+  });
+};
+
+// ==========================================
+// PARSE SCOPE
+// ==========================================
+
 const parseCsvNumberList = (value, min, max, label) => {
   if (value === undefined || value === null || value === "") {
     throwError(`Review scope requires ${label}`, 400);
   }
 
-  const numbers = String(value)
-    .split(",")
-    .map((item) => Number(item.trim()))
-    .filter((item) => Number.isInteger(item));
+  const parts = asArray(value).flatMap((v) =>
+    String(v).split(",")
+  );
 
-  if (!numbers.length) {
-    throwError(`Review scope requires valid ${label}`, 400);
+  const numbers = parts.map((part) =>
+    Number(part.trim())
+  );
+
+  if (
+    !numbers.length ||
+    numbers.some(
+      (n) =>
+        !Number.isInteger(n) ||
+        n < min ||
+        n > max
+    )
+  ) {
+    throwError(
+      `${label} values must be integers between ${min} and ${max}`,
+      400
+    );
   }
 
-  const deduped = [...new Set(numbers)];
-  const invalid = deduped.some((item) => item < min || item > max);
-
-  if (invalid) {
-    throwError(`${label} values must be between ${min} and ${max}`, 400);
-  }
-
-  return deduped;
+  return unique(numbers).sort((a, b) => a - b);
 };
 
 export const parseReviewScope = (query = {}) => {
-  const curriculum = String(query.curriculum || REVIEW_CURRICULUM).trim();
+  const curriculum = asString(
+    query.curriculum || REVIEW_CURRICULUM
+  );
 
   if (curriculum !== REVIEW_CURRICULUM) {
-    throwError("Unsupported curriculum. Only sou-matome-n3-kanji is allowed.", 400);
+    throwError(
+      "Unsupported curriculum. Only sou-matome-n3-kanji is allowed.",
+      400
+    );
   }
 
   const weeks = parseCsvNumberList(
@@ -103,6 +191,7 @@ export const parseReviewScope = (query = {}) => {
     6,
     "weeks"
   );
+
   const days = parseCsvNumberList(
     query.days ?? query.day,
     1,
@@ -110,29 +199,56 @@ export const parseReviewScope = (query = {}) => {
     "days"
   );
 
-  const contentType = ["kanji", "vocabulary", "both"].includes(query.contentType)
-    ? query.contentType
-    : "both";
+  const contentType = query.contentType ?? "both";
+  const mode = query.mode ?? "flashcard";
 
-  const mode = ["flashcard", "quiz", "typing"].includes(query.mode)
-    ? query.mode
-    : "flashcard";
+  if (!["kanji", "vocabulary", "both"].includes(contentType)) {
+    throwError("Invalid contentType", 400);
+  }
 
-  const directions = safeArray(
-    typeof query.directions === "string"
-      ? query.directions.split(",")
-      : query.directions
-  ).map((item) => item.trim()).filter(Boolean);
+  if (!["flashcard", "quiz", "typing"].includes(mode)) {
+    throwError("Invalid mode", 400);
+  }
 
-  const normalizedDirections = directions.length
-    ? directions.filter((direction) => VALID_DIRECTIONS.includes(direction))
-    : contentType === "vocabulary"
-      ? DEFAULT_VOCAB_DIRECTIONS
-      : contentType === "kanji"
-        ? DEFAULT_KANJI_DIRECTIONS
-        : [...DEFAULT_KANJI_DIRECTIONS, ...DEFAULT_VOCAB_DIRECTIONS];
+  const requestedDirections = asArray(query.directions)
+    .flatMap((v) => String(v).split(","))
+    .map(asString)
+    .filter(Boolean);
 
-  const limit = Math.max(1, Number(query.limit || 20));
+  const directions = unique(
+    requestedDirections.length
+      ? requestedDirections
+      : ["kanji"]
+  );
+
+  if (
+    directions.some(
+      (direction) => !VALID_DIRECTIONS.includes(direction)
+    )
+  ) {
+    throwError("Invalid review direction", 400);
+  }
+
+  // Không truyền limit = ôn tất cả
+  const rawLimit = query.limit;
+
+  const limit =
+    rawLimit === undefined ||
+    rawLimit === null ||
+    rawLimit === "" ||
+    rawLimit === "null"
+      ? null
+      : Number(rawLimit);
+
+  if (
+    limit !== null &&
+    (!Number.isSafeInteger(limit) || limit <= 0)
+  ) {
+    throwError(
+      "limit must be a positive integer or omitted for all",
+      400
+    );
+  }
 
   return {
     curriculum,
@@ -140,221 +256,262 @@ export const parseReviewScope = (query = {}) => {
     days,
     contentType,
     mode,
-    directions: normalizedDirections,
+    directions,
     limit,
   };
 };
 
-export const normalizeTypingAnswer = (value = "") => {
-  const text = String(value || "")
-    .trim()
-    .replace(/[\s\u3000]+/g, "")
-    .replace(/[。．]/g, "")
-    .replace(/[・]/g, "")
-    .replace(/\./g, "")
-    .replace(/\uFF3A/g, "\u30A2")
-    .replace(/\uFF3B/g, "\u30A1");
+// ==========================================
+// NORMALIZE TYPING
+// ==========================================
 
-  return text
-    .replace(/[ァ-ン]/g, (char) => {
-      const code = char.charCodeAt(0) - 0x60;
-      return String.fromCharCode(code);
-    })
-    .replace(/[ャュョ]/g, (char) => {
-      const code = char.charCodeAt(0) - 0x60;
-      return String.fromCharCode(code);
-    });
+export const normalizeTypingAnswer = (value = "") => {
+  return asString(value)
+    .replace(/[\s\u3000]+/g, "")
+    .replace(/[。．・.]/g, "")
+    .replace(/[ァ-ヶ]/g, (char) =>
+      String.fromCharCode(char.charCodeAt(0) - 0x60)
+    );
 };
 
+// ==========================================
+// NORMALIZE KANJI
+// ==========================================
+
 const getKanjiItemData = (item) => {
-  const meanings = unique(
-    safeArray(item.meanings).concat(safeArray(item.meaning))
-  );
+  // FIX: hỗ trợ cả MongoDB document
+  // và item đã được normalize.
+  const kanji = asString(item.kanji || item.front);
 
   return {
     itemType: "kanji",
-    itemId: item._id || item.id,
-    front: item.kanji || "",
-    meanings,
-    onyomi: safeArray((item.onyomi || []).map((entry) => entry.reading || entry))
-      .filter(Boolean),
-    kunyomi: safeArray((item.kunyomi || []).map((entry) => entry.reading || entry))
-      .filter(Boolean),
-    hanViet: unique(safeArray(item.hanViet)),
+    itemId: item.itemId ?? item._id ?? item.id,
+    front: kanji,
+    kanji,
+    meanings: asMeanings(
+      item.meanings?.length
+        ? item.meanings
+        : item.meaning
+    ),
+    onyomi: asReadings(item.onyomi),
+    kunyomi: asReadings(item.kunyomi),
+    hanViet: asMeanings(item.hanViet),
   };
 };
+
+// ==========================================
+// NORMALIZE VOCABULARY
+// ==========================================
 
 const getVocabularyItemData = (item) => {
+  const word = asString(
+    item.word || item.kanji || item.front
+  );
+
   return {
     itemType: "vocabulary",
-    itemId: item._id || item.id,
-    front: item.word || item.kanji || "",
-    meaning: item.meaning || "",
-    hiragana: item.hiragana || "",
-    hanViet: item.hanViet || "",
-    readings: safeArray(item.readings || []).map((reading) =>
-      typeof reading === "string" ? reading : reading.reading
-    ),
-    word: item.word || item.kanji || "",
+    itemId: item.itemId ?? item._id ?? item.id,
+    front: word,
+    word,
+    meaning: asString(item.meaning),
+    hiragana: asString(item.hiragana),
+    hanViet: asString(item.hanViet),
+    readings: asReadings(item.readings),
   };
 };
+
+// ==========================================
+// DIRECTIONS
+// ==========================================
 
 const itemSupportsDirection = (itemType, direction) => {
-  const allowed = {
-    kanji: [
-      "kanji_meaning",
-      "meaning_kanji",
-      "onyomi",
-      "kunyomi",
-      "hanviet",
-    ],
-    vocabulary: [
-      "kanji_reading",
-      "reading_kanji",
-      "vocab_meaning",
-      "meaning_vocab",
-    ],
-  };
-
-  return allowed[itemType]?.includes(direction) || false;
+  return (
+    ALLOWED_DIRECTIONS[itemType]?.includes(direction) ??
+    false
+  );
 };
 
+const resolveDirection = (
+  itemType,
+  directions,
+  mode
+) => {
+  // "kanji" là chế độ hiển thị Flashcard tổng hợp.
+  if (
+    mode !== "flashcard" &&
+    directions.includes("kanji")
+  ) {
+    throwError(
+      "Direction 'kanji' is only supported in flashcard mode",
+      400
+    );
+  }
+
+  return (
+    directions.find((direction) =>
+      itemSupportsDirection(itemType, direction)
+    ) || null
+  );
+};
+
+// ==========================================
+// ANSWERS
+// ==========================================
+
 const getAnswerSet = (item, direction) => {
+  const data =
+    item.itemType === "kanji"
+      ? getKanjiItemData(item)
+      : getVocabularyItemData(item);
+
   switch (direction) {
     case "kanji":
-      return [item.kanji || item.word || ""].filter(Boolean);
+      return [data.kanji || data.word].filter(Boolean);
+
     case "kanji_meaning":
-      return safeArray(item.meanings || item.meaning || item.meaning_vi);
+      return data.meanings ?? [];
+
     case "meaning_kanji":
-      return [item.kanji].filter(Boolean);
+      return [data.kanji].filter(Boolean);
+
     case "onyomi":
-      return safeArray((item.onyomi || []).map((entry) => entry.reading || entry));
+      return data.onyomi ?? [];
+
     case "kunyomi":
-      return safeArray((item.kunyomi || []).map((entry) => entry.reading || entry));
+      return data.kunyomi ?? [];
+
     case "hanviet":
-      return safeArray(item.hanViet || []);
+      return asMeanings(data.hanViet);
+
     case "kanji_reading":
-      return safeArray([item.hiragana || item.reading || item.word]);
+      return [data.hiragana].filter(Boolean);
+
     case "reading_kanji":
-      return safeArray([item.word || item.kanji]);
+      return [data.word].filter(Boolean);
+
     case "vocab_meaning":
-      return safeArray([item.meaning]).filter(Boolean);
+      return [data.meaning].filter(Boolean);
+
     case "meaning_vocab":
-      return safeArray([item.word || item.kanji]).filter(Boolean);
+      return [data.word].filter(Boolean);
+
     default:
       return [];
   }
 };
 
+// ==========================================
+// QUESTION FRONT
+// ==========================================
+
 const buildQuestionFront = (item, direction) => {
+  const data =
+    item.itemType === "kanji"
+      ? getKanjiItemData(item)
+      : getVocabularyItemData(item);
+
   switch (direction) {
+    case "kanji":
     case "kanji_meaning":
-      return item.kanji || "";
-    case "meaning_kanji":
-      return (safeArray(item.meanings || item.meaning).join(" / ") || item.kanji || "").trim();
     case "onyomi":
     case "kunyomi":
     case "hanviet":
-      return item.kanji || "";
+      return data.kanji || data.word || "";
+
+    case "meaning_kanji":
+      return data.meanings?.join(" / ") || "";
+
     case "kanji_reading":
-      return item.word || item.kanji || "";
-    case "reading_kanji":
-      return item.hiragana || item.word || "";
     case "vocab_meaning":
-      return item.word || item.kanji || "";
+      return data.word || "";
+
+    case "reading_kanji":
+      return data.hiragana || "";
+
     case "meaning_vocab":
-      return item.meaning || "";
+      return data.meaning || "";
+
     default:
       return "";
   }
 };
 
+// ==========================================
+// FLASHCARD BACK
+// ==========================================
+
 const buildKanjiFlashcardBack = (item) => {
-  const asReadingList = (values = []) => unique(
-    safeArray(values).map((value) => {
-      if (typeof value === "string") return value.trim();
-      if (value && typeof value === "object") return String(value.reading || value.value || "").trim();
-      return String(value || "").trim();
-    })
-  ).filter(Boolean);
-
-  const hanViet = unique(safeArray(item.hanViet)).map((value) => String(value).trim()).filter(Boolean);
-  const onyomi = asReadingList(item.onyomi);
-  const kunyomi = asReadingList(item.kunyomi);
-  const meanings = unique(safeArray(item.meanings)).map((value) => String(value).trim()).filter(Boolean);
-
   return {
-    kanji: String(item.front || item.kanji || "").trim(),
-    hanViet: hanViet.join(", ") || "",
-    onyomi,
-    kunyomi,
-    meaning: meanings.length ? meanings.join("; ") : "",
+    kanji: asString(item.kanji || item.front),
+    hanViet: asMeanings(item.hanViet).join(", "),
+    onyomi: asReadings(item.onyomi),
+    kunyomi: asReadings(item.kunyomi),
+    meaning: asMeanings(
+      item.meanings?.length
+        ? item.meanings
+        : item.meaning
+    ).join("; "),
   };
 };
 
 const buildVocabularyFlashcardBack = (item) => {
-  const hanViet = item.hanViet ? String(item.hanViet).trim() : "";
-  const hiragana = item.hiragana ? String(item.hiragana).trim() : "";
-  const meaning = item.meaning ? String(item.meaning).trim() : "";
-
   return {
-    word: String(item.word || item.kanji || "").trim(),
-    hanViet,
-    hiragana,
-    meaning,
+    word: asString(item.word || item.front),
+    hanViet: asString(item.hanViet),
+    hiragana: asString(item.hiragana),
+    meaning: asString(item.meaning),
   };
 };
 
-export const buildFlashcardItems = (items = [], directions = []) => {
-  const requestedDirections = Array.isArray(directions) && directions.length
-    ? directions
-    : ["kanji"];
+// ==========================================
+// BUILD FLASHCARDS
+// ==========================================
+
+export const buildFlashcardItems = (
+  items = [],
+  directions = ["kanji"]
+) => {
   const cards = [];
 
   for (const item of items) {
-    const itemType = item.itemType || (item.kanji ? "kanji" : "vocabulary");
-    const data = itemType === "kanji" ? getKanjiItemData(item) : getVocabularyItemData(item);
-    const itemId = normalizeItemId(data.itemId || item.itemId || item._id || item.id);
+    const itemType =
+      item.itemType ||
+      (item.kanji ? "kanji" : "vocabulary");
 
-    if (!itemId) {
+    const data =
+      itemType === "kanji"
+        ? getKanjiItemData(item)
+        : getVocabularyItemData(item);
+
+    const itemId = normalizeItemId(data.itemId);
+
+    const direction = resolveDirection(
+      itemType,
+      directions,
+      "flashcard"
+    );
+
+    if (!itemId || !data.front || !direction) {
       continue;
     }
 
-    const front = itemType === "kanji"
-      ? String(data.front || item.kanji || "").trim()
-      : String(data.front || item.word || "").trim();
+    const front = buildQuestionFront(
+      data,
+      direction
+    );
 
-    if (!front) {
-      continue;
-    }
+    if (!front) continue;
 
-    const effectiveDirection = requestedDirections.includes("kanji")
-      ? "kanji"
-      : requestedDirections.find((direction) => itemSupportsDirection(itemType, direction)) || "kanji";
-
-    const back = itemType === "kanji"
-      ? buildKanjiFlashcardBack({
-          ...data,
-          front,
-          kanji: item.kanji || data.front || front,
-          hanViet: item.hanViet || data.hanViet || [],
-          onyomi: item.onyomi || data.onyomi || [],
-          kunyomi: item.kunyomi || data.kunyomi || [],
-          meanings: item.meanings || data.meanings || [],
-        })
-      : buildVocabularyFlashcardBack({
-          ...data,
-          word: item.word || data.word || front,
-          hanViet: item.hanViet || data.hanViet || "",
-          hiragana: item.hiragana || data.hiragana || "",
-          meaning: item.meaning || data.meaning || "",
-        });
+    const back =
+      itemType === "kanji"
+        ? buildKanjiFlashcardBack(data)
+        : buildVocabularyFlashcardBack(data);
 
     cards.push({
-      id: `${itemType}-${itemId}-${effectiveDirection}`,
+      id: `${itemType}-${itemId}-${direction}`,
       itemType,
       itemId,
-      direction: effectiveDirection,
+      direction,
       front,
       back,
     });
@@ -363,79 +520,157 @@ export const buildFlashcardItems = (items = [], directions = []) => {
   return cards;
 };
 
-const buildDistractors = (itemType, direction, allItems) => {
-  const pool = [];
+// ==========================================
+// QUIZ DISTRACTORS
+// ==========================================
 
-  for (const item of allItems) {
-    const actualType = item.itemType || (item.kanji ? "kanji" : "vocabulary");
-    if (actualType !== itemType) continue;
-
-    const data = actualType === "kanji" ? getKanjiItemData(item) : getVocabularyItemData(item);
-    const answers = unique(getAnswerSet(data, direction));
-    for (const answer of answers) {
-      if (answer && !pool.includes(answer)) {
-        pool.push(answer);
-      }
-    }
-  }
-
-  return pool;
+const buildDistractors = (
+  itemType,
+  direction,
+  items
+) => {
+  return unique(
+    items
+      .filter((item) => item.itemType === itemType)
+      .flatMap((item) =>
+        getAnswerSet(item, direction)
+      )
+  );
 };
 
-export const buildQuizQuestions = (items = [], directions = []) => {
-  const cards = buildFlashcardItems(items, directions);
+// ==========================================
+// BUILD QUIZ
+// ==========================================
+
+export const buildQuizQuestions = (
+  items = [],
+  directions = []
+) => {
   const questions = [];
 
-  for (const card of cards) {
-    const sourceItem = items.find((item) => String(item._id || item.id || item.itemId) === String(card.itemId)) || card;
-    const acceptedAnswers = unique(getAnswerSet(sourceItem, card.direction)).filter(Boolean);
+  for (const item of items) {
+    const itemType = item.itemType;
 
-    if (!acceptedAnswers.length) continue;
+    const direction = resolveDirection(
+      itemType,
+      directions,
+      "quiz"
+    );
 
-    const distractors = buildDistractors(card.itemType, card.direction, items)
-      .filter((choice) => !acceptedAnswers.includes(choice));
+    if (!direction) continue;
 
-    const choices = shuffle(unique([
-      ...acceptedAnswers,
-      ...distractors,
-    ])).slice(0, 4);
+    const data =
+      itemType === "kanji"
+        ? getKanjiItemData(item)
+        : getVocabularyItemData(item);
 
-    if (choices.length < 4) {
+    const itemId = normalizeItemId(data.itemId);
+
+    const question = buildQuestionFront(
+      data,
+      direction
+    );
+
+    const acceptedAnswers = unique(
+      getAnswerSet(data, direction)
+    );
+
+    if (
+      !itemId ||
+      !question ||
+      !acceptedAnswers.length
+    ) {
       continue;
     }
 
     const correct = acceptedAnswers[0];
+
+    const distractors = shuffle(
+      buildDistractors(
+        itemType,
+        direction,
+        items
+      ).filter(
+        (answer) =>
+          !acceptedAnswers.includes(answer)
+      )
+    );
+
+    if (distractors.length < 3) {
+      continue;
+    }
+
     questions.push({
-      id: card.id,
-      itemType: card.itemType,
-      direction: card.direction,
-      question: card.front,
+      id: `${itemType}-${itemId}-${direction}`,
+      itemType,
+      itemId,
+      direction,
+      question,
       correct,
       acceptedAnswers,
-      choices: shuffle(choices),
+      choices: shuffle([
+        correct,
+        ...distractors.slice(0, 3),
+      ]),
     });
   }
 
   return questions;
 };
 
-export const buildTypingQuestions = (items = [], directions = []) => {
-  const cards = buildFlashcardItems(items, directions);
+// ==========================================
+// BUILD TYPING
+// ==========================================
+
+export const buildTypingQuestions = (
+  items = [],
+  directions = []
+) => {
   const questions = [];
 
-  for (const card of cards) {
-    const sourceItem = items.find((item) => String(item._id || item.id || item.itemId) === String(card.itemId)) || card;
-    const acceptedAnswers = unique(
-      getAnswerSet(sourceItem, card.direction).map((answer) => normalizeTypingAnswer(answer))
-    ).filter(Boolean);
+  for (const item of items) {
+    const itemType = item.itemType;
 
-    if (!acceptedAnswers.length) continue;
+    const direction = resolveDirection(
+      itemType,
+      directions,
+      "typing"
+    );
+
+    if (!direction) continue;
+
+    const data =
+      itemType === "kanji"
+        ? getKanjiItemData(item)
+        : getVocabularyItemData(item);
+
+    const itemId = normalizeItemId(data.itemId);
+
+    const question = buildQuestionFront(
+      data,
+      direction
+    );
+
+    const acceptedAnswers = unique(
+      getAnswerSet(data, direction).map(
+        normalizeTypingAnswer
+      )
+    );
+
+    if (
+      !itemId ||
+      !question ||
+      !acceptedAnswers.length
+    ) {
+      continue;
+    }
 
     questions.push({
-      id: card.id,
-      itemType: card.itemType,
-      direction: card.direction,
-      question: card.front,
+      id: `${itemType}-${itemId}-${direction}`,
+      itemType,
+      itemId,
+      direction,
+      question,
       correct: acceptedAnswers[0],
       acceptedAnswers,
     });
@@ -444,49 +679,60 @@ export const buildTypingQuestions = (items = [], directions = []) => {
   return questions;
 };
 
+// ==========================================
+// LOAD DOCUMENTS
+// ==========================================
+
 const buildItemDocumentMap = async (items) => {
   const kanjiIds = items
     .filter((item) => item.itemType === "kanji")
-    .map((item) => item.itemId)
-    .filter(Boolean);
+    .map((item) => item.itemId);
 
   const vocabularyIds = items
     .filter((item) => item.itemType === "vocabulary")
-    .map((item) => item.itemId)
-    .filter(Boolean);
+    .map((item) => item.itemId);
 
-  const [kanjiDocuments, vocabularyDocuments] = await Promise.all([
-    kanjiIds.length ? Kanji.find({ _id: { $in: kanjiIds } }).lean() : [],
-    vocabularyIds.length ? KanjiVocabulary.find({ _id: { $in: vocabularyIds } }).lean() : [],
+  const [
+    kanjiDocuments,
+    vocabularyDocuments,
+  ] = await Promise.all([
+    kanjiIds.length
+      ? Kanji.find({
+          _id: { $in: kanjiIds },
+        }).lean()
+      : [],
+
+    vocabularyIds.length
+      ? KanjiVocabulary.find({
+          _id: { $in: vocabularyIds },
+        }).lean()
+      : [],
   ]);
 
-  const kanjiMap = new Map(kanjiDocuments.map((entry) => [String(entry._id), entry]));
-  const vocabularyMap = new Map(
-    vocabularyDocuments.map((entry) => [String(entry._id), entry])
-  );
+  return {
+    kanjiMap: new Map(
+      kanjiDocuments.map((entry) => [
+        String(entry._id),
+        entry,
+      ])
+    ),
 
-  return { kanjiMap, vocabularyMap };
+    vocabularyMap: new Map(
+      vocabularyDocuments.map((entry) => [
+        String(entry._id),
+        entry,
+      ])
+    ),
+  };
 };
 
-const ensureSelectedItemsUnique = (items = []) => {
-  const seen = new Set();
-  const next = [];
+// ==========================================
+// RESOLVE CURRICULUM ITEMS
+// ==========================================
 
-  for (const item of items) {
-    const key = `${item.itemType}:${String(item.itemId)}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      next.push({
-        itemType: item.itemType,
-        itemId: item.itemId,
-      });
-    }
-  }
-
-  return next;
-};
-
-export const resolveSelectedCurriculumItems = async (scope) => {
+export const resolveSelectedCurriculumItems = async (
+  scope
+) => {
   const entries = await KanjiCurriculumEntry.find({
     curriculum: scope.curriculum,
     week: { $in: scope.weeks },
@@ -494,58 +740,107 @@ export const resolveSelectedCurriculumItems = async (scope) => {
   })
     .populate("kanjiId")
     .populate("vocabularyIds")
-    .sort({ week: 1, day: 1, order: 1 })
+    .sort({
+      week: 1,
+      day: 1,
+      order: 1,
+    })
     .lean();
 
   const selected = [];
-  const seen = new Set();
 
   for (const entry of entries) {
-    if ((scope.contentType === "kanji" || scope.contentType === "both") && entry.kanjiId) {
-      const id = String(entry.kanjiId._id || entry.kanjiId);
-      if (!seen.has(`kanji:${id}`)) {
-        seen.add(`kanji:${id}`);
-        selected.push({ itemType: "kanji", itemId: id });
-      }
+    // Kanji chính
+    if (
+      ["kanji", "both"].includes(scope.contentType) &&
+      entry.kanjiId?._id
+    ) {
+      selected.push({
+        itemType: "kanji",
+        itemId: String(entry.kanjiId._id),
+      });
     }
 
-    if ((scope.contentType === "vocabulary" || scope.contentType === "both") && Array.isArray(entry.vocabularyIds)) {
-      for (const vocab of entry.vocabularyIds) {
-        const id = String(vocab._id || vocab);
-        if (!seen.has(`vocabulary:${id}`)) {
-          seen.add(`vocabulary:${id}`);
-          selected.push({ itemType: "vocabulary", itemId: id });
+    // Từ vựng liên quan
+    if (
+      ["vocabulary", "both"].includes(scope.contentType)
+    ) {
+      for (const vocab of entry.vocabularyIds || []) {
+        if (vocab?._id) {
+          selected.push({
+            itemType: "vocabulary",
+            itemId: String(vocab._id),
+          });
         }
       }
     }
   }
 
-  return selected.slice(0, Number(scope.limit || 20));
+  // FIX: Không giới hạn 20 ở đây.
+  // selectedIds phải chứa toàn bộ phạm vi.
+  return uniqueSelections(selected);
 };
 
-const mapReviewRecord = (record) => {
-  const selectedIds = sanitizeSelectionList(record?.selectedIds || []);
-  const completedIds = sanitizeSelectionList(record?.completedIds || []);
+// ==========================================
+// HISTORY HELPERS
+// ==========================================
+
+const toMongoSelections = (items) => {
+  return items.map(({ itemType, itemId }) => ({
+    itemType,
+    itemId: new mongoose.Types.ObjectId(itemId),
+  }));
+};
+
+const getHistorySets = (history) => {
+  const selectedIds = uniqueSelections(
+    sanitizeSelectionList(history.selectedIds)
+  );
+
+  const selectedSet = new Set(
+    selectedIds.map(selectionKey)
+  );
+
+  const completedIds = uniqueSelections(
+    sanitizeSelectionList(history.completedIds)
+  ).filter((item) =>
+    selectedSet.has(selectionKey(item))
+  );
+
+  const completedSet = new Set(
+    completedIds.map(selectionKey)
+  );
+
+  const remainingIds = selectedIds.filter(
+    (item) =>
+      !completedSet.has(selectionKey(item))
+  );
 
   return {
-    ...(record?.toObject ? record.toObject() : record || {}),
     selectedIds,
     completedIds,
-    remainingIds: selectedIds.filter(
-      (item) => !completedIds.some(
-        (completed) =>
-          completed.itemType === item.itemType && completed.itemId === item.itemId
-      )
-    ),
+    remainingIds,
   };
 };
 
-export const createReviewSession = async (query = {}) => {
+// ==========================================
+// CREATE REVIEW SESSION
+// ==========================================
+
+export const createReviewSession = async (
+  query = {}
+) => {
   const scope = parseReviewScope(query);
-  const selectedItems = await resolveSelectedCurriculumItems(scope);
+
+  // Lấy toàn bộ dữ liệu trong phạm vi
+  const selectedItems =
+    await resolveSelectedCurriculumItems(scope);
 
   if (!selectedItems.length) {
-    throwError("No curriculum entries matched the selected weeks and days", 400);
+    throwError(
+      "No curriculum entries matched the selected weeks and days",
+      400
+    );
   }
 
   const sessionKey = [
@@ -557,45 +852,43 @@ export const createReviewSession = async (query = {}) => {
     scope.directions.join(","),
   ].join("|");
 
-  const reviewId = query.reviewId;
   let history;
 
-  if (reviewId) {
-    history = await KanjiReviewHistory.findById(reviewId);
+  // ========================================
+  // FIND HISTORY
+  // ========================================
+
+  if (query.reviewId) {
+    if (!normalizeItemId(query.reviewId)) {
+      throwError("Invalid reviewId", 400);
+    }
+
+    history = await KanjiReviewHistory.findById(
+      query.reviewId
+    );
+
     if (!history) {
       throwError("Review session not found", 404);
     }
 
-    const sessionMatches =
-      String(history.curriculum) === String(scope.curriculum)
-      && JSON.stringify([...history.weeks].sort()) === JSON.stringify([...scope.weeks].sort())
-      && JSON.stringify([...history.days].sort()) === JSON.stringify([...scope.days].sort())
-      && history.contentType === scope.contentType
-      && history.mode === scope.mode
-      && JSON.stringify(history.directions || []) === JSON.stringify(scope.directions || []);
-
-    if (!sessionMatches) {
-      throwError("Review session does not match the requested curriculum scope", 400);
+    if (history.sessionKey !== sessionKey) {
+      throwError(
+        "Review session does not match the requested curriculum scope",
+        400
+      );
     }
+  } else {
+    history = await KanjiReviewHistory.findOne({
+      sessionKey,
+    });
   }
+
+  // ========================================
+  // CREATE HISTORY
+  // ========================================
 
   if (!history) {
-    history = await KanjiReviewHistory.findOne({ sessionKey });
-  }
-
-  const allSelected = ensureSelectedItemsUnique(selectedItems)
-    .filter((item) => normalizeItemId(item.itemId))
-    .map((item) => ({
-      itemType: item.itemType,
-      itemId: new mongoose.Types.ObjectId(item.itemId),
-    }));
-
-  if (!allSelected.length) {
-    throwError("No valid curriculum items were found for the requested review scope", 400);
-  }
-
-  if (!history) {
-    const reviewDocument = await KanjiReviewHistory.create({
+    history = await KanjiReviewHistory.create({
       sessionKey,
       curriculum: scope.curriculum,
       weeks: scope.weeks,
@@ -604,162 +897,255 @@ export const createReviewSession = async (query = {}) => {
       mode: scope.mode,
       directions: scope.directions,
       limit: scope.limit,
-      selectedIds: allSelected,
+      selectedIds: toMongoSelections(
+        selectedItems
+      ),
       completedIds: [],
-      remainingIds: allSelected,
+      remainingIds: toMongoSelections(
+        selectedItems
+      ),
       status: "active",
     });
+  } else {
+    // FIX:
+    // Đồng bộ session cũ từng bị giới hạn 20.
+    // Giữ lại các mục đã hoàn thành
+    // nếu vẫn thuộc phạm vi hiện tại.
 
-    history = reviewDocument;
+    const old = getHistorySets(history);
+
+    const currentSet = new Set(
+      selectedItems.map(selectionKey)
+    );
+
+    const completedIds = old.completedIds.filter(
+      (item) =>
+        currentSet.has(selectionKey(item))
+    );
+
+    const completedSet = new Set(
+      completedIds.map(selectionKey)
+    );
+
+    const remainingIds = selectedItems.filter(
+      (item) =>
+        !completedSet.has(selectionKey(item))
+    );
+
+    history.selectedIds = toMongoSelections(
+      selectedItems
+    );
+
+    history.completedIds = toMongoSelections(
+      completedIds
+    );
+
+    history.remainingIds = toMongoSelections(
+      remainingIds
+    );
+
+    history.limit = scope.limit;
+
+    history.status = remainingIds.length
+      ? "active"
+      : "completed";
+
+    await history.save();
   }
 
-  const sanitizedHistorySelected = sanitizeSelectionList(history.selectedIds || []);
-  const sanitizedHistoryCompleted = sanitizeSelectionList(history.completedIds || []);
+  // ========================================
+  // GET REMAINING
+  // ========================================
 
-  const selectedSet = new Set(
-    sanitizedHistorySelected.map((item) => `${item.itemType}:${item.itemId}`)
+  const record = getHistorySets(history);
+
+  // FIX:
+  // null = lấy tất cả
+  // number = giới hạn lượt ôn
+  const itemsToRender =
+    scope.limit === null
+      ? record.remainingIds
+      : record.remainingIds.slice(
+          0,
+          scope.limit
+        );
+
+  // ========================================
+  // LOAD MONGODB DOCUMENTS
+  // ========================================
+
+  const itemMaps = await buildItemDocumentMap(
+    itemsToRender
   );
-  const completedSet = new Set(
-    sanitizedHistoryCompleted.map((item) => `${item.itemType}:${item.itemId}`)
-  );
-  const remaining = sanitizedHistorySelected.filter(
-    (item) => !completedSet.has(`${item.itemType}:${item.itemId}`)
-  );
 
-  const itemsToRender = remaining.length
-    ? remaining.slice(0, scope.limit)
-    : [];
+  const renderedItems = itemsToRender
+    .map((item) => {
+      const document =
+        item.itemType === "kanji"
+          ? itemMaps.kanjiMap.get(item.itemId)
+          : itemMaps.vocabularyMap.get(item.itemId);
 
-  const itemMaps = await buildItemDocumentMap(itemsToRender.map((item) => ({
-    itemType: item.itemType,
-    itemId: String(item.itemId),
-  })));
+      if (!document) return null;
 
-  const renderedItems = itemsToRender.map((item) => {
-    const itemValue = item.itemType === "kanji"
-      ? itemMaps.kanjiMap.get(String(item.itemId))
-      : itemMaps.vocabularyMap.get(String(item.itemId));
+      const data =
+        item.itemType === "kanji"
+          ? getKanjiItemData(document)
+          : getVocabularyItemData(document);
 
-    if (!itemValue) return null;
-    return {
-      ...item,
-      ...(item.itemType === "kanji" ? getKanjiItemData(itemValue) : getVocabularyItemData(itemValue)),
-    };
-  }).filter(Boolean);
+      return {
+        ...data,
+        itemType: item.itemType,
+        itemId: item.itemId,
+      };
+    })
+    .filter(Boolean);
+
+  // ========================================
+  // GENERATE REVIEW DATA
+  // ========================================
 
   const generated =
     scope.mode === "flashcard"
-      ? buildFlashcardItems(renderedItems, scope.directions)
+      ? buildFlashcardItems(
+          renderedItems,
+          scope.directions
+        )
       : scope.mode === "quiz"
-        ? buildQuizQuestions(renderedItems, scope.directions)
-        : buildTypingQuestions(renderedItems, scope.directions);
+        ? buildQuizQuestions(
+            renderedItems,
+            scope.directions
+          )
+        : buildTypingQuestions(
+            renderedItems,
+            scope.directions
+          );
 
-  const record = mapReviewRecord(history);
+  // ========================================
+  // RESPONSE
+  // ========================================
 
   return {
     mode: scope.mode,
     total: generated.length,
-    data: scope.mode === "flashcard"
-      ? { mode: "flashcard", total: generated.length, cards: generated }
-      : scope.mode === "quiz"
-        ? { mode: "quiz", total: generated.length, questions: generated }
-        : { mode: "typing", total: generated.length, questions: generated },
+
+    data:
+      scope.mode === "flashcard"
+        ? {
+            mode: scope.mode,
+            total: generated.length,
+            cards: generated,
+          }
+        : {
+            mode: scope.mode,
+            total: generated.length,
+            questions: generated,
+          },
+
     meta: {
       reviewId: String(history._id),
+
       progress: {
         selectedVocabs: record.selectedIds.length,
         reviewedVocabs: record.completedIds.length,
         total: record.selectedIds.length,
-        remaining: Math.max(record.selectedIds.length - record.completedIds.length, 0),
-        completed: record.completedIds.length >= record.selectedIds.length,
+        remaining: record.remainingIds.length,
+        completed:
+          record.remainingIds.length === 0,
       },
     },
   };
 };
 
-export const completeReviewSession = async (payload = {}) => {
-  const reviewId = payload.reviewId || payload.id;
+// ==========================================
+// COMPLETE REVIEW ITEM
+// ==========================================
 
-  if (!reviewId) {
-    throwError("reviewId is required", 400);
+export const completeReviewSession = async (
+  payload = {}
+) => {
+  const reviewId =
+    payload.reviewId || payload.id;
+
+  if (!normalizeItemId(reviewId)) {
+    throwError(
+      "Valid reviewId is required",
+      400
+    );
   }
 
-  if (!mongoose.Types.ObjectId.isValid(reviewId)) {
-    throwError("Invalid reviewId", 400);
-  }
-
-  const history = await KanjiReviewHistory.findById(reviewId);
+  const history =
+    await KanjiReviewHistory.findById(reviewId);
 
   if (!history) {
-    throwError("Review session not found", 404);
+    throwError(
+      "Review session not found",
+      404
+    );
   }
 
-  const itemType = payload.itemType;
-  const itemId = payload.itemId;
+  const item = normalizeSelectionEntry(payload);
 
-  if (!itemType || !itemId) {
-    throwError("itemType and itemId are required", 400);
+  if (!item) {
+    throwError(
+      "Valid itemType and itemId are required",
+      400
+    );
   }
 
-  if (!["kanji", "vocabulary"].includes(itemType)) {
-    throwError("itemType must be kanji or vocabulary", 400);
-  }
+  const record = getHistorySets(history);
 
-  if (!mongoose.Types.ObjectId.isValid(itemId)) {
-    throwError("Invalid itemId", 400);
-  }
-
-  const selectedIds = sanitizeSelectionList(history.selectedIds || []);
-  const completedIds = sanitizeSelectionList(history.completedIds || []);
-
-  const selectedMatch = selectedIds.some(
-    (entry) => entry.itemType === itemType && entry.itemId === String(itemId)
+  const selectedMatch = record.selectedIds.some(
+    (entry) =>
+      selectionKey(entry) === selectionKey(item)
   );
 
   if (!selectedMatch) {
-    throwError("Item is not part of the active review session", 400);
+    throwError(
+      "Item is not part of the active review session",
+      400
+    );
   }
 
-  const existingCompleted = completedIds.some(
-    (entry) => entry.itemType === itemType && entry.itemId === String(itemId)
+  const completedIds = uniqueSelections([
+    ...record.completedIds,
+    item,
+  ]);
+
+  const completedSet = new Set(
+    completedIds.map(selectionKey)
   );
 
-  if (!existingCompleted) {
-    completedIds.push({ itemType, itemId: String(itemId) });
-    history.completedIds = completedIds.map((entry) => ({
-      itemType: entry.itemType,
-      itemId: new mongoose.Types.ObjectId(entry.itemId),
-    }));
-  }
+  const remainingIds = record.selectedIds.filter(
+    (entry) =>
+      !completedSet.has(selectionKey(entry))
+  );
 
-  history.remainingIds = selectedIds
-    .filter(
-      (item) => !completedIds.some(
-        (completed) =>
-          completed.itemType === item.itemType && completed.itemId === item.itemId
-      )
-    )
-    .map((item) => ({
-      itemType: item.itemType,
-      itemId: new mongoose.Types.ObjectId(item.itemId),
-    }));
+  history.completedIds = toMongoSelections(
+    completedIds
+  );
 
-  history.status =
-    history.completedIds.length >= history.selectedIds.length ? "completed" : "active";
+  history.remainingIds = toMongoSelections(
+    remainingIds
+  );
+
+  history.status = remainingIds.length
+    ? "active"
+    : "completed";
 
   await history.save();
 
   return {
     success: true,
     message: "Review item marked as completed",
+
     data: {
       reviewId: String(history._id),
-      itemType,
-      itemId,
+      itemType: item.itemType,
+      itemId: item.itemId,
       completed: true,
-      remaining: history.remainingIds.length,
-      selected: history.selectedIds.length,
-      reviewed: history.completedIds.length,
+      remaining: remainingIds.length,
+      selected: record.selectedIds.length,
+      reviewed: completedIds.length,
     },
   };
 };
