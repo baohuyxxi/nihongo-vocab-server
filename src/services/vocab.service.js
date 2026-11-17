@@ -1,10 +1,11 @@
+
 import Vocabulary from "../models/Vocabulary.js";
 import ReviewHistory from "../models/ReviewHistory.js";
 import { shuffle } from "../utils/shuffle.js";
 
-/* =========================
+/* =====================================================
    BASIC VOCAB SERVICES
-========================= */
+===================================================== */
 
 export const getAllVocab = async () => {
     return Vocabulary.find().sort({
@@ -47,23 +48,19 @@ export const getVocabByTopic = async (topics) => {
     }).sort({ lesson: 1 });
 };
 
-/* =========================
+/* =====================================================
    CRUD VOCAB SERVICES
-========================= */
+===================================================== */
 
 export const createVocab = async (data) => {
     return Vocabulary.create(data);
 };
 
 export const updateVocab = async (id, data) => {
-    return Vocabulary.findByIdAndUpdate(
-        id,
-        data,
-        {
-            new: true,
-            runValidators: true,
-        }
-    );
+    return Vocabulary.findByIdAndUpdate(id, data, {
+        new: true,
+        runValidators: true,
+    });
 };
 
 export const deleteVocab = async (id) => {
@@ -109,7 +106,9 @@ export const bulkUpdateVocab = async (vocabs) => {
         const update = {};
 
         for (const field of allowedFields) {
-            if (Object.prototype.hasOwnProperty.call(v, field)) {
+            if (
+                Object.prototype.hasOwnProperty.call(v, field)
+            ) {
                 update[field] = v[field];
             }
         }
@@ -117,28 +116,23 @@ export const bulkUpdateVocab = async (vocabs) => {
         return {
             updateOne: {
                 filter: { _id: v._id },
-                update: {
-                    $set: update,
-                },
+                update: { $set: update },
             },
         };
     });
 
-    if (!ops.length) {
-        return null;
-    }
+    if (!ops.length) return null;
 
     return Vocabulary.bulkWrite(ops);
 };
-/* =========================
+
+/* =====================================================
    OTHER VOCAB SERVICES
-========================= */
+===================================================== */
 
 export const getAllVerbs = async () => {
     return Vocabulary.find({
-        hiragana: {
-            $regex: "ます$",
-        },
+        hiragana: { $regex: "ます$" },
     }).sort({
         lesson: 1,
         hiragana: 1,
@@ -146,9 +140,7 @@ export const getAllVerbs = async () => {
 };
 
 export const getVocabByPartOfSpeech = async (pos) => {
-    return Vocabulary.find({
-        partOfSpeech: pos,
-    });
+    return Vocabulary.find({ partOfSpeech: pos });
 };
 
 export const countVocabByPartOfSpeech = async (pos) => {
@@ -206,9 +198,7 @@ export const getTest = async () => {
                 _id: 1,
             },
         },
-        {
-            $limit: 50,
-        },
+        { $limit: 50 },
     ]);
 };
 
@@ -227,7 +217,8 @@ export const getVocabWithoutImage = async () => {
         { $sample: { size: 1 } },
     ]);
 
-    const remaining = await Vocabulary.countDocuments(filter);
+    const remaining =
+        await Vocabulary.countDocuments(filter);
 
     return {
         result: result || null,
@@ -235,50 +226,115 @@ export const getVocabWithoutImage = async () => {
     };
 };
 
-/* =========================
+/* =====================================================
    REVIEW HELPERS
-========================= */
+===================================================== */
 
-const getJP = (v) => {
-    return v.hiragana || v.katakana || v.romaji || "";
+const normalize = (value) =>
+    String(value ?? "").normalize("NFKC").trim();
+
+const normalizeKey = (value) =>
+    normalize(value).toLocaleLowerCase();
+
+const parseArray = (value) => {
+    if (Array.isArray(value)) {
+        return value
+            .map((x) => String(x).trim())
+            .filter(Boolean);
+    }
+
+    if (value === null || value === undefined) {
+        return [];
+    }
+
+    return String(value)
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean);
 };
 
-/* =========================
+const parseNumbers = (value) => [
+    ...new Set(
+        parseArray(value)
+            .map(Number)
+            .filter((x) => Number.isInteger(x) && x > 0)
+    ),
+];
+
+const parseStrings = (value) => [
+    ...new Set(parseArray(value)),
+];
+
+const parseLimit = (value) => {
+    if (
+        value === null ||
+        value === undefined ||
+        value === ""
+    ) {
+        return null;
+    }
+
+    const number = Number(value);
+
+    return Number.isInteger(number) && number > 0
+        ? number
+        : null;
+};
+
+const escapeRegex = (value) =>
+    value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const getJP = (v) => {
+    if (v.defaultScript === "katakana") {
+        return normalize(
+            v.katakana || v.hiragana || v.romaji
+        );
+    }
+
+    return normalize(
+        v.hiragana || v.katakana || v.romaji
+    );
+};
+
+const hasImage = (v) =>
+    typeof v.image === "string" &&
+    v.image.trim().length > 0;
+
+/* =====================================================
    FLASHCARD
-========================= */
+===================================================== */
 
 const buildFlashcards = (vocabs, directions) => {
     const cards = [];
 
     vocabs.forEach((v) => {
         directions.forEach((dir) => {
-            // JP -> VI
-            if (dir === "jp_vi") {
+            const jp = getJP(v);
+
+            if (dir === "jp_vi" && jp) {
                 cards.push({
                     id: v._id,
-                    front: getJP(v),
+                    front: jp,
                     back: v.meaning,
                     direction: dir,
                 });
             }
 
-            // VI -> JP
-            if (dir === "vi_jp") {
+            if (dir === "vi_jp" && jp) {
                 cards.push({
                     id: v._id,
                     front: v.meaning,
-                    back: getJP(v),
+                    back: jp,
                     direction: dir,
                 });
             }
 
-            // KANJI
-            if (dir === "kanji" && v.kanji) {
+            if (dir === "kanji" && v.kanji && jp) {
                 cards.push({
                     id: v._id,
                     front: v.kanji,
                     back: {
-                        jp: getJP(v),
+                        jp,
                         meaning: v.meaning,
                         hanViet: v.hanViet || null,
                     },
@@ -286,30 +342,34 @@ const buildFlashcards = (vocabs, directions) => {
                 });
             }
 
-            // IMAGE
-            if (dir === "image") {
-                if (
-                    v.image === undefined ||
-                    v.image === null ||
-                    v.image === ""
-                ) {
-                    console.log(v.image);
-                } else {
-                    cards.push({
-                        id: v._id,
-                        front: {
-                            type: "image",
-                            value: v.image,
-                        },
-                        back: {
-                            jp: getJP(v),
-                            meaning: v.meaning,
-                            kanji: v.kanji || null,
-                            hiragana: v.hiragana || null,
-                        },
-                        direction: dir,
-                    });
-                }
+            if (dir === "jp_kanji" && v.kanji && jp) {
+                cards.push({
+                    id: v._id,
+                    front: jp,
+                    back: {
+                        jp: v.kanji,
+                        meaning: v.meaning,
+                        hanViet: v.hanViet || null,
+                    },
+                    direction: dir,
+                });
+            }
+
+            if (dir === "image" && hasImage(v)) {
+                cards.push({
+                    id: v._id,
+                    front: {
+                        type: "image",
+                        value: v.image,
+                    },
+                    back: {
+                        jp,
+                        meaning: v.meaning,
+                        kanji: v.kanji || null,
+                        hiragana: v.hiragana || null,
+                    },
+                    direction: dir,
+                });
             }
         });
     });
@@ -321,124 +381,523 @@ const buildFlashcards = (vocabs, directions) => {
     };
 };
 
-/* =========================
-   QUIZ CHOICE
-========================= */
+/* =====================================================
+   QUIZ - ANSWER HELPERS
+===================================================== */
 
-const buildQuizChoice = (vocabs, directions) => {
+const getQuizAnswer = (v, direction) => {
+    switch (direction) {
+        case "jp_vi":
+            return normalize(v.meaning);
+
+        case "vi_jp":
+        case "kanji":
+        case "image":
+            return getJP(v);
+
+        case "jp_kanji":
+            return normalize(v.kanji);
+
+        default:
+            return "";
+    }
+};
+
+const getQuizQuestion = (v, direction) => {
+    switch (direction) {
+        case "jp_vi":
+            return getJP(v);
+
+        case "vi_jp":
+            return normalize(v.meaning);
+
+        case "kanji":
+            return normalize(v.kanji);
+
+        case "jp_kanji":
+            return getJP(v);
+
+        case "image":
+            return hasImage(v)
+                ? { type: "image", value: v.image }
+                : null;
+
+        default:
+            return null;
+    }
+};
+
+/* =====================================================
+   QUIZ - TEXT SIMILARITY
+===================================================== */
+
+const toChars = (value) =>
+    Array.from(normalize(value));
+
+const commonPrefix = (a, b) => {
+    const x = toChars(a);
+    const y = toChars(b);
+
+    let count = 0;
+
+    while (
+        count < x.length &&
+        count < y.length &&
+        x[count] === y[count]
+    ) {
+        count++;
+    }
+
+    return count;
+};
+
+const commonSuffix = (a, b) => {
+    const x = toChars(a).reverse().join("");
+    const y = toChars(b).reverse().join("");
+
+    return commonPrefix(x, y);
+};
+
+const commonCharacters = (a, b) => {
+    const counts = new Map();
+
+    for (const char of toChars(b)) {
+        counts.set(
+            char,
+            (counts.get(char) || 0) + 1
+        );
+    }
+
+    let total = 0;
+
+    for (const char of toChars(a)) {
+        const count = counts.get(char) || 0;
+
+        if (count > 0) {
+            total++;
+            counts.set(char, count - 1);
+        }
+    }
+
+    return total;
+};
+
+const editDistance = (a, b) => {
+    const x = toChars(a);
+    const y = toChars(b);
+
+    let previous = Array.from(
+        { length: y.length + 1 },
+        (_, index) => index
+    );
+
+    for (let i = 1; i <= x.length; i++) {
+        const current = [i];
+
+        for (let j = 1; j <= y.length; j++) {
+            const cost =
+                x[i - 1] === y[j - 1] ? 0 : 1;
+
+            current[j] = Math.min(
+                current[j - 1] + 1,
+                previous[j] + 1,
+                previous[j - 1] + cost
+            );
+        }
+
+        previous = current;
+    }
+
+    return previous[y.length];
+};
+
+const similarityScore = (a, b) => {
+    const x = normalize(a);
+    const y = normalize(b);
+
+    if (!x || !y || x === y) {
+        return -Infinity;
+    }
+
+    const lenA = toChars(x).length;
+    const lenB = toChars(y).length;
+
+    const lengthDifference = Math.abs(
+        lenA - lenB
+    );
+
+    const maxLength = Math.max(lenA, lenB);
+
+    const similarity =
+        1 - editDistance(x, y) / maxLength;
+
+    let score = similarity * 100;
+
+    if (lengthDifference === 0) {
+        score += 50;
+    } else if (lengthDifference === 1) {
+        score += 20;
+    } else if (lengthDifference === 2) {
+        score += 5;
+    }
+
+    score += commonCharacters(x, y) * 12;
+    score += commonPrefix(x, y) * 10;
+    score += commonSuffix(x, y) * 8;
+
+    return score;
+};
+
+/* =====================================================
+   QUIZ - DISTRACTOR SCORING
+===================================================== */
+
+const scoreDistractor = (
+    correct,
+    candidate,
+    direction
+) => {
+    const correctAnswer =
+        getQuizAnswer(correct, direction);
+
+    const candidateAnswer =
+        getQuizAnswer(candidate, direction);
+
+    if (
+        !candidateAnswer ||
+        normalizeKey(correctAnswer) ===
+        normalizeKey(candidateAnswer)
+    ) {
+        return -Infinity;
+    }
+
+    let score = similarityScore(
+        correctAnswer,
+        candidateAnswer
+    );
+
+    if (!Number.isFinite(score)) {
+        return -Infinity;
+    }
+
+    // Ưu tiên cùng loại từ
+    if (
+        correct.partOfSpeech &&
+        correct.partOfSpeech === candidate.partOfSpeech
+    ) {
+        score += 18;
+    }
+
+    // Ưu tiên cùng topic
+    if (
+        correct.topic &&
+        correct.topic === candidate.topic
+    ) {
+        score += 8;
+    }
+
+    // Ưu tiên cùng N3 topic
+    if (
+        correct.n3Topic &&
+        correct.n3Topic === candidate.n3Topic
+    ) {
+        score += 5;
+    }
+
+    // Kanji -> Kana
+    if (direction === "kanji") {
+        const correctJP = getJP(correct);
+        const candidateJP = getJP(candidate);
+
+        const lengthDifference = Math.abs(
+            toChars(correctJP).length -
+            toChars(candidateJP).length
+        );
+
+        if (lengthDifference === 0) {
+            score += 25;
+        }
+
+        score +=
+            commonCharacters(
+                correctJP,
+                candidateJP
+            ) * 10;
+    }
+
+    // Kana -> Kanji
+    if (direction === "jp_kanji") {
+        const correctKanji = normalize(
+            correct.kanji
+        );
+
+        const candidateKanji = normalize(
+            candidate.kanji
+        );
+
+        const lengthDifference = Math.abs(
+            toChars(correctKanji).length -
+            toChars(candidateKanji).length
+        );
+
+        if (lengthDifference === 0) {
+            score += 35;
+        }
+
+        score +=
+            commonCharacters(
+                correctKanji,
+                candidateKanji
+            ) * 15;
+    }
+
+    return score;
+};
+
+/* =====================================================
+   QUIZ - PREVENT AMBIGUOUS ANSWERS
+===================================================== */
+
+const isAmbiguousAnswer = (
+    correct,
+    candidate,
+    direction
+) => {
+    const correctJP = getJP(correct);
+    const candidateJP = getJP(candidate);
+
+    const correctMeaning = normalizeKey(
+        correct.meaning
+    );
+
+    const candidateMeaning = normalizeKey(
+        candidate.meaning
+    );
+
+    const correctKanji = normalize(
+        correct.kanji
+    );
+
+    const candidateKanji = normalize(
+        candidate.kanji
+    );
+
+    // Kana -> Kanji:
+    // cùng cách đọc có thể có nhiều Kanji đúng
+    if (direction === "jp_kanji") {
+        return correctJP === candidateJP;
+    }
+
+    // Kanji -> Kana:
+    // cùng Kanji có thể có nhiều cách đọc
+    if (direction === "kanji") {
+        return (
+            correctKanji &&
+            correctKanji === candidateKanji
+        );
+    }
+
+    // Việt -> Nhật:
+    // cùng nghĩa có thể có nhiều từ Nhật đúng
+    if (direction === "vi_jp") {
+        return correctMeaning === candidateMeaning;
+    }
+
+    // Nhật -> Việt:
+    // cùng cách đọc có thể có nhiều nghĩa
+    if (direction === "jp_vi") {
+        return correctJP === candidateJP;
+    }
+
+    return false;
+};
+
+/* =====================================================
+   QUIZ - SELECT DISTRACTORS
+===================================================== */
+
+const selectDistractors = (
+    correct,
+    pool,
+    direction,
+    count = 3
+) => {
+    const correctId = String(correct._id);
+
+    const correctAnswer =
+        getQuizAnswer(correct, direction);
+
+    const ranked = [];
+
+    for (const candidate of pool) {
+        if (String(candidate._id) === correctId) {
+            continue;
+        }
+
+        if (
+            isAmbiguousAnswer(
+                correct,
+                candidate,
+                direction
+            )
+        ) {
+            continue;
+        }
+
+        const answer = getQuizAnswer(
+            candidate,
+            direction
+        );
+
+        if (
+            !answer ||
+            normalizeKey(answer) ===
+            normalizeKey(correctAnswer)
+        ) {
+            continue;
+        }
+
+        const score = scoreDistractor(
+            correct,
+            candidate,
+            direction
+        );
+
+        if (!Number.isFinite(score)) {
+            continue;
+        }
+
+        ranked.push({
+            answer,
+            score,
+        });
+    }
+
+    // Loại đáp án trùng
+    const unique = new Map();
+
+    for (const item of ranked) {
+        const key = normalizeKey(item.answer);
+
+        const existing = unique.get(key);
+
+        if (
+            !existing ||
+            item.score > existing.score
+        ) {
+            unique.set(key, item);
+        }
+    }
+
+    const sorted = [...unique.values()].sort(
+        (a, b) => b.score - a.score
+    );
+
+    // Lấy nhóm ứng viên tốt nhất
+    const topCandidates = sorted.slice(
+        0,
+        Math.max(count * 4, 12)
+    );
+
+    // Có ngẫu nhiên nhẹ nhưng vẫn ưu tiên điểm cao
+    const selected = shuffle(topCandidates)
+        .map((item) => ({
+            ...item,
+            adjustedScore:
+                item.score + Math.random() * 12,
+        }))
+        .sort(
+            (a, b) =>
+                b.adjustedScore - a.adjustedScore
+        )
+        .slice(0, count);
+
+    return selected.map((item) => item.answer);
+};
+
+/* =====================================================
+   QUIZ - LOAD FULL DATABASE POOL
+===================================================== */
+
+const loadQuizDistractorPool = async () => {
+    return Vocabulary.find({})
+        .select(
+            "_id kanji hiragana katakana " +
+            "defaultScript romaji meaning " +
+            "partOfSpeech topic n3Topic image"
+        )
+        .lean();
+};
+
+/* =====================================================
+   QUIZ - BUILD QUESTIONS
+===================================================== */
+
+const buildQuizChoice = (
+    vocabs,
+    directions,
+    distractorPool
+) => {
     const questions = [];
 
-    vocabs.forEach((v) => {
-        directions.forEach((dir) => {
-            // SAME TYPE POOL
-            const sameTypePool = vocabs.filter(
-                (x) =>
-                    x._id.toString() !== v._id.toString() &&
-                    x.partOfSpeech === v.partOfSpeech
+    for (const v of vocabs) {
+        for (const direction of directions) {
+            const question = getQuizQuestion(
+                v,
+                direction
             );
 
-            // SAME TOPIC POOL
-            const sameTopicPool = vocabs.filter(
-                (x) =>
-                    x._id.toString() !== v._id.toString() &&
-                    x.topic === v.topic
+            const correct = getQuizAnswer(
+                v,
+                direction
             );
 
-            // PRIORITY
-            let distractors = shuffle(sameTypePool);
-
-            // Chưa đủ thì thêm cùng topic
-            if (distractors.length < 3) {
-                const remain = sameTopicPool.filter(
-                    (x) =>
-                        !distractors.some(
-                            (d) => d._id.toString() === x._id.toString()
-                        )
-                );
-
-                distractors = [
-                    ...distractors,
-                    ...shuffle(remain),
-                ];
+            if (!question || !correct) {
+                continue;
             }
 
-            // Vẫn chưa đủ thì lấy ngẫu nhiên
-            if (distractors.length < 3) {
-                const remain = vocabs.filter(
-                    (x) =>
-                        x._id.toString() !== v._id.toString() &&
-                        !distractors.some(
-                            (d) => d._id.toString() === x._id.toString()
-                        )
-                );
-
-                distractors = [
-                    ...distractors,
-                    ...shuffle(remain),
-                ];
+            // Hai hướng Kanji bắt buộc có Kanji
+            if (
+                ["kanji", "jp_kanji"].includes(direction) &&
+                !normalize(v.kanji)
+            ) {
+                continue;
             }
 
-            const wrongVocabs = distractors.slice(0, 3);
+            const wrongAnswers = selectDistractors(
+                v,
+                distractorPool,
+                direction,
+                3
+            );
 
-            // JP -> VI
-            if (dir === "jp_vi") {
-                const wrong = wrongVocabs.map((x) => x.meaning);
-
-                questions.push({
-                    id: v._id,
-                    direction: dir,
-                    question: getJP(v),
-                    correct: v.meaning,
-                    choices: shuffle([
-                        v.meaning,
-                        ...wrong,
-                    ]),
-                    partOfSpeech: v.partOfSpeech,
-                    topic: v.topic,
-                });
+            // Chỉ tạo câu khi có đủ 3 đáp án nhiễu
+            if (wrongAnswers.length !== 3) {
+                continue;
             }
 
-            // VI -> JP
-            if (dir === "vi_jp") {
-                const wrong = wrongVocabs.map((x) => getJP(x));
+            const choices = shuffle([
+                correct,
+                ...wrongAnswers,
+            ]);
 
-                questions.push({
-                    id: v._id,
-                    direction: dir,
-                    question: v.meaning,
-                    correct: getJP(v),
-                    choices: shuffle([
-                        getJP(v),
-                        ...wrong,
-                    ]),
-                    partOfSpeech: v.partOfSpeech,
-                    topic: v.topic,
-                });
-            }
+            questions.push({
+                id: v._id,
+                direction,
+                question,
+                correct,
+                choices,
 
-            // KANJI QUIZ
-            if (dir === "kanji" && v.kanji) {
-                const wrong = wrongVocabs
-                    .filter((x) => x.kanji)
-                    .map((x) => x.kanji);
+                partOfSpeech: v.partOfSpeech,
+                topic: v.topic,
 
-                if (wrong.length >= 3) {
-                    questions.push({
-                        id: v._id,
-                        direction: dir,
-                        question: getJP(v),
-                        correct: v.kanji,
-                        choices: shuffle([
-                            v.kanji,
-                            ...wrong.slice(0, 3),
-                        ]),
-                        partOfSpeech: v.partOfSpeech,
-                        topic: v.topic,
-                    });
-                }
-            }
-        });
-    });
+                kanji: v.kanji || null,
+                hiragana: getJP(v),
+                meaning: v.meaning,
+                hanViet: v.hanViet || null,
+            });
+        }
+    }
 
     return {
         mode: "quiz",
@@ -447,95 +906,128 @@ const buildQuizChoice = (vocabs, directions) => {
     };
 };
 
-/* =========================
-   REVIEW SESSION SERVICE
-========================= */
+/* ==========================================
+   TYPING REVIEW
+   Việt → Nhật
+   Kanji → Nhật
+========================================== */
 
-/* =========================
+// Chuẩn hóa chuỗi
+const cleanTypingText = (value) =>
+    String(value ?? "").normalize("NFKC").trim();
+
+// Tách mỗi ký tự Kana thành một ô
+const splitKanaCells = (value) =>
+    Array.from(
+        cleanTypingText(value).replace(/\s+/g, "")
+    );
+
+// Lấy cách đọc Kana của từ vựng
+const getTypingKana = (vocab) => {
+    const value = cleanTypingText(
+        vocab.defaultScript === "katakana"
+            ? vocab.katakana || vocab.hiragana
+            : vocab.hiragana || vocab.katakana
+    );
+
+    // Chỉ chấp nhận Hiragana / Katakana
+    if (
+        !value ||
+        !/^[\u3040-\u30ff\u31f0-\u31ffー\s]+$/u.test(value)
+    ) {
+        return "";
+    }
+
+    return value;
+};
+
+// Tạo câu hỏi điền từ
+const buildTyping = (vocabs, directions) => {
+    const questions = [];
+
+    for (const vocab of vocabs) {
+        const answer = getTypingKana(vocab);
+
+        if (!answer) continue;
+
+        const answerCells = splitKanaCells(answer);
+
+        if (!answerCells.length) continue;
+
+        for (const direction of directions) {
+            let question = "";
+
+            // Việt → Nhật
+            if (direction === "vi_jp") {
+                question = cleanTypingText(vocab.meaning);
+            }
+
+            // Kanji → Nhật
+            if (direction === "kanji") {
+                question = cleanTypingText(vocab.kanji);
+            }
+
+            if (!question) continue;
+
+            questions.push({
+                id: String(vocab._id),
+
+                direction,
+                question,
+
+                answer,
+                correct: answer,
+
+                // Frontend tạo ô vuông từ mảng này
+                answerCells,
+
+                cellCount: answerCells.length,
+
+                meaning: vocab.meaning || "",
+                kanji: vocab.kanji || "",
+                hiragana: vocab.hiragana || "",
+                katakana: vocab.katakana || "",
+            });
+        }
+    }
+
+    return {
+        mode: "typing",
+        total: questions.length,
+        questions: shuffle(questions),
+    };
+};
+
+
+/* =====================================================
    REVIEW SESSION SERVICE
-========================= */
+===================================================== */
+
+
+/* =====================================================
+   REVIEW SESSION SERVICE
+===================================================== */
 
 export const createReviewSession = async (params) => {
     const {
         reviewId = "",
         lessons = "",
         topics = "",
-
-        // N3
         units = "",
         n3Topics = "",
-
         partsOfSpeech = "",
         mode = "flashcard",
         directions = "jp_vi",
         limit = "",
     } = params;
 
-    /* =========================
-       HELPERS
-    ========================= */
-
-    const parseArray = (value) => {
-        if (Array.isArray(value)) {
-            return value
-                .map((x) => String(x).trim())
-                .filter(Boolean);
-        }
-
-        if (value === null || value === undefined || value === "") {
-            return [];
-        }
-
-        return String(value)
-            .split(",")
-            .map((x) => x.trim())
-            .filter(Boolean);
-    };
-
-    const parseNumbers = (value) => {
-        return [
-            ...new Set(
-                parseArray(value)
-                    .map(Number)
-                    .filter((x) => Number.isInteger(x) && x > 0)
-            ),
-        ];
-    };
-
-    const parseStrings = (value) => {
-        return [...new Set(parseArray(value))];
-    };
-
-    const escapeRegex = (value) => {
-        return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    };
-
-    const parseLimit = (value) => {
-        if (value === null || value === undefined || value === "") {
-            return null;
-        }
-
-        const number = Number(value);
-
-        return Number.isInteger(number) && number > 0
-            ? number
-            : null;
-    };
-
-    /* =========================
-       SESSION VARIABLES
-    ========================= */
-
     let history = null;
     let isNewSession = false;
 
     let lessonArr = [];
     let topicArr = [];
-
-    // N3
     let unitArr = [];
     let n3TopicArr = [];
-
     let partOfSpeechArr = [];
     let directionArr = [];
 
@@ -559,7 +1051,7 @@ export const createReviewSession = async (params) => {
 
         try {
             savedConfig = JSON.parse(history.configKey);
-        } catch (err) {
+        } catch {
             return {
                 error: "Config của review session không hợp lệ",
             };
@@ -568,7 +1060,6 @@ export const createReviewSession = async (params) => {
         lessonArr = parseNumbers(savedConfig.lessons);
         topicArr = parseStrings(savedConfig.topics);
 
-        // N3
         unitArr = parseNumbers(savedConfig.units);
         n3TopicArr = parseStrings(savedConfig.n3Topics);
 
@@ -582,12 +1073,11 @@ export const createReviewSession = async (params) => {
 
         currentMode = savedConfig.mode || "flashcard";
 
-        // Phiên mới lưu limit vào configKey.
-        // Phiên cũ chưa có limit thì sử dụng tham số request.
         reviewLimit =
             savedConfig.limit !== undefined
                 ? parseLimit(savedConfig.limit)
                 : parseLimit(limit);
+
     } else {
         /* =========================
            NEW SESSION
@@ -595,14 +1085,16 @@ export const createReviewSession = async (params) => {
 
         lessonArr = parseNumbers(lessons);
 
-        topicArr = parseStrings(topics)
-            .map((x) => x.toLowerCase());
+        topicArr = parseStrings(topics).map(
+            (x) => x.toLowerCase()
+        );
 
-        // N3
         unitArr = parseNumbers(units);
+
         n3TopicArr = parseStrings(n3Topics);
 
         partOfSpeechArr = parseStrings(partsOfSpeech);
+
         directionArr = parseStrings(directions);
 
         currentMode = mode;
@@ -624,22 +1116,27 @@ export const createReviewSession = async (params) => {
         };
     }
 
+    /* =========================
+       VALIDATE DIRECTIONS
+    ========================= */
+
+    const validDirections = [
+        "jp_vi",
+        "vi_jp",
+        "kanji",
+        "jp_kanji",
+        "image",
+    ];
+
     if (!directionArr.length) {
         return {
             error: "Chưa chọn hướng ôn tập",
         };
     }
 
-    const validDirections = [
-        "jp_vi",
-        "vi_jp",
-        "kanji",
-        "image",
-    ];
-
     if (
         directionArr.some(
-            (direction) => !validDirections.includes(direction)
+            (dir) => !validDirections.includes(dir)
         )
     ) {
         return {
@@ -647,11 +1144,17 @@ export const createReviewSession = async (params) => {
         };
     }
 
-    // Chế độ typing chưa có buildTyping trong service bạn gửi.
-    // Không tạo lịch sử hoặc ghi vocabIds khi chưa hỗ trợ.
-    if (currentMode === "typing") {
+    // Typing chỉ hỗ trợ Việt → Nhật và Kanji → Nhật
+    if (
+        currentMode === "typing" &&
+        directionArr.some(
+            (direction) =>
+                !["vi_jp", "kanji"].includes(direction)
+        )
+    ) {
         return {
-            error: "Chưa có hàm buildTyping trong vocab.service.js",
+            error:
+                "Điền từ chỉ hỗ trợ Việt → Nhật và Kanji → Nhật",
         };
     }
 
@@ -661,10 +1164,6 @@ export const createReviewSession = async (params) => {
 
     const conditions = [];
 
-    /*
-      MINNA LESSONS
-    */
-
     if (lessonArr.length > 0) {
         conditions.push({
             lesson: {
@@ -672,10 +1171,6 @@ export const createReviewSession = async (params) => {
             },
         });
     }
-
-    /*
-      MINNA TOPICS
-    */
 
     if (topicArr.length > 0) {
         conditions.push({
@@ -691,15 +1186,6 @@ export const createReviewSession = async (params) => {
         });
     }
 
-    /*
-      N3 UNITS
-  
-      Ví dụ:
-      units = [1, 2, 3]
-  
-      Lấy tất cả từ thuộc Unit 1, 2, 3.
-    */
-
     if (unitArr.length > 0) {
         conditions.push({
             unit: {
@@ -707,17 +1193,6 @@ export const createReviewSession = async (params) => {
             },
         });
     }
-
-    /*
-      N3 TOPICS
-  
-      Ví dụ:
-      n3Topics = ["1", "2", "5"]
-  
-      Lấy các từ thuộc Topic 1, 2, 5.
-  
-      Topic được chọn độc lập với Unit.
-    */
 
     if (n3TopicArr.length > 0) {
         conditions.push({
@@ -727,12 +1202,6 @@ export const createReviewSession = async (params) => {
         });
     }
 
-    /*
-      PART OF SPEECH
-  
-      Giữ logic OR của code gốc.
-    */
-
     if (partOfSpeechArr.length > 0) {
         conditions.push({
             partOfSpeech: {
@@ -741,46 +1210,46 @@ export const createReviewSession = async (params) => {
         });
     }
 
-    /*
-      Không có bộ lọc nào:
-      tránh lấy toàn bộ database ngoài ý muốn.
-    */
-
     if (conditions.length === 0) {
         return {
             error: "Chưa chọn phạm vi từ vựng để ôn tập",
         };
     }
 
-    let query = {};
-
-    if (conditions.length === 1) {
-        query = conditions[0];
-    } else {
-        query = {
-            $or: conditions,
-        };
-    }
+    const query =
+        conditions.length === 1
+            ? conditions[0]
+            : {
+                $or: conditions,
+            };
 
     /* =========================
-       CREATE NEW HISTORY
+       CREATE HISTORY
     ========================= */
 
     if (!history) {
         const configKey = JSON.stringify({
-            lessons: [...lessonArr].sort((a, b) => a - b),
-            topics: [...topicArr].sort(),
-
-            // N3
-            units: [...unitArr].sort((a, b) => a - b),
-            n3Topics: [...n3TopicArr].sort(
-                (a, b) => Number(a) - Number(b)
+            lessons: [...lessonArr].sort(
+                (a, b) => a - b
             ),
 
-            partsOfSpeech: [...partOfSpeechArr].sort(),
+            topics: [...topicArr].sort(),
+
+            units: [...unitArr].sort(
+                (a, b) => a - b
+            ),
+
+            n3Topics: [...n3TopicArr].sort(),
+
+            partsOfSpeech: [
+                ...partOfSpeechArr,
+            ].sort(),
 
             mode: currentMode,
-            directions: [...directionArr].sort(),
+
+            directions: [
+                ...directionArr,
+            ].sort(),
 
             limit: reviewLimit,
         });
@@ -791,6 +1260,7 @@ export const createReviewSession = async (params) => {
         });
 
         isNewSession = true;
+
     } else {
         history.updatedAt = new Date();
         await history.save();
@@ -800,7 +1270,9 @@ export const createReviewSession = async (params) => {
        FIND VOCABS
     ========================= */
 
-    const allVocabs = await Vocabulary.find(query)
+    const allVocabs = await Vocabulary.find(
+        query
+    )
         .select("_id")
         .lean();
 
@@ -810,17 +1282,14 @@ export const createReviewSession = async (params) => {
 
     const totalVocabs = allIds.length;
 
-    /*
-      Giữ nguyên cơ chế của code gốc:
-  
-      history.vocabIds lưu các từ đã được
-      đưa vào phiên ôn tập trước đó.
-    */
-
-    const reviewedIds = history.vocabIds || [];
+    /* =========================
+       REVIEWED VOCABS
+    ========================= */
 
     const reviewedSet = new Set(
-        reviewedIds.map((id) => id.toString())
+        (history.vocabIds || []).map(
+            (id) => id.toString()
+        )
     );
 
     let remainingIds = allIds.filter(
@@ -869,14 +1338,14 @@ export const createReviewSession = async (params) => {
         : remainingIds;
 
     /* =========================
-       LOAD SELECTED VOCABS
+       LOAD VOCABS
     ========================= */
 
     const vocabs = await Vocabulary.find({
         _id: {
             $in: selectedIds,
         },
-    });
+    }).lean();
 
     const vocabMap = new Map(
         vocabs.map((vocab) => [
@@ -886,7 +1355,9 @@ export const createReviewSession = async (params) => {
     );
 
     const orderedVocabs = selectedIds
-        .map((id) => vocabMap.get(id.toString()))
+        .map((id) =>
+            vocabMap.get(id.toString())
+        )
         .filter(Boolean);
 
     /* =========================
@@ -896,24 +1367,58 @@ export const createReviewSession = async (params) => {
     let data;
 
     switch (currentMode) {
-        case "flashcard":
+
+        /* =====================
+           FLASHCARD
+        ===================== */
+
+        case "flashcard": {
             data = buildFlashcards(
                 orderedVocabs,
                 directionArr
             );
-            break;
 
-        case "quiz":
+            break;
+        }
+
+        /* =====================
+           QUIZ
+        ===================== */
+
+        case "quiz": {
+            // Toàn bộ kho từ vựng được sử dụng
+            // để tìm đáp án nhiễu phù hợp
+
+            const distractorPool =
+                await loadQuizDistractorPool();
+
             data = buildQuizChoice(
+                orderedVocabs,
+                directionArr,
+                distractorPool
+            );
+
+            break;
+        }
+
+        /* =====================
+           TYPING
+        ===================== */
+
+        case "typing": {
+            data = buildTyping(
                 orderedVocabs,
                 directionArr
             );
-            break;
 
-        default:
+            break;
+        }
+
+        default: {
             return {
                 error: "Mode không hợp lệ",
             };
+        }
     }
 
     /* =========================
@@ -922,7 +1427,9 @@ export const createReviewSession = async (params) => {
 
     if (orderedVocabs.length > 0) {
         history.vocabIds.push(
-            ...orderedVocabs.map((vocab) => vocab._id)
+            ...orderedVocabs.map(
+                (vocab) => vocab._id
+            )
         );
 
         history.updatedAt = new Date();
@@ -934,12 +1441,17 @@ export const createReviewSession = async (params) => {
        PROGRESS
     ========================= */
 
-    const reviewedVocabs = history.vocabIds.length;
+    const reviewedVocabs =
+        history.vocabIds.length;
 
     const remaining = Math.max(
         0,
         totalVocabs - reviewedVocabs
     );
+
+    /* =========================
+       RETURN RESULT
+    ========================= */
 
     return {
         data,
@@ -962,22 +1474,26 @@ export const createReviewSession = async (params) => {
         },
     };
 };
-/* =========================
+
+
+/* =====================================================
    COMPLETE REVIEW VOCAB
-========================= */
+===================================================== */
 
 export const completeReviewVocab = async (
     reviewId,
     vocabId
 ) => {
-    const history = await ReviewHistory.findById(reviewId);
+    const history =
+        await ReviewHistory.findById(reviewId);
 
     if (!history) {
         return null;
     }
 
     history.vocabIds = history.vocabIds.filter(
-        (id) => id.toString() !== vocabId.toString()
+        (id) =>
+            id.toString() !== vocabId.toString()
     );
 
     history.updatedAt = new Date();
@@ -987,6 +1503,7 @@ export const completeReviewVocab = async (
     return {
         reviewId: history._id,
         remaining: history.vocabIds.length,
-        completed: history.vocabIds.length === 0,
+        completed:
+            history.vocabIds.length === 0,
     };
 };
