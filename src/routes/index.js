@@ -1,3 +1,4 @@
+import { errorResponse } from "../utils/response.js";
 import vocabRoutes from "./vocab.routes.js";
 import lessonRoutes from "./lesson.routes.js";
 import cloudinaryRoutes from "./cloudinary.routes.js";
@@ -8,7 +9,16 @@ import kanjiCurriculumRoutes from "./kanjiCurriculum.routes.js";
 import kanjiVocabularyRoutes from "./kanjiVocabulary.routes.js";
 import radicalRoutes from "./radical.routes.js";
 
+import kaiwaRoutes from "./kaiwa.routes.js";
+
 const route = (app) => {
+  app.use("/api/kaiwa", kaiwaRoutes);
+  app.use("/api/kaiwa", (error, _req, res, next) => {
+    if (res.headersSent) return next(error);
+    if (error.type === "entity.parse.failed") return errorResponse(res, "Invalid JSON", 400);
+    if (error.type === "entity.too.large") return errorResponse(res, "Request body is too large", 413);
+    return errorResponse(res);
+  });
   app.use("/api/vocab", vocabRoutes);
   app.use("/api/lessons", lessonRoutes);
   app.use("/api/cloudinary", cloudinaryRoutes);
